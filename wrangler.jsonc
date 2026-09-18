@@ -1,0 +1,10 @@
+{
+  // Cloudflare Workers static-assets config for the storefront.
+  // Serves the built Angular app; SPA fallback sends deep links to index.html.
+  "name": "kf-publicsite",
+  "compatibility_date": "2025-09-18",
+  "assets": {
+    "directory": "./dist/kf-shop/browser",
+    "not_found_handling": "single-page-application"
+  }
+}

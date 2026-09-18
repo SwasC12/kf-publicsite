@@ -24,14 +24,16 @@ products from the Oil Tracker admin app — see setup below.
 
 1. [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** →
    **Create** → **Pages** → **Connect to Git** → pick `SwasC12/kf-publicsite`.
-2. Build settings (set manually — don't rely on the Angular preset):
-   - **Framework preset:** None
+2. Build settings:
    - **Build command:** `npm run build`
-   - **Build output directory:** `dist/kf-shop/browser`
+   - **Deploy command:** `npx wrangler deploy` (default)
    - (Node version is pinned to 22 by the `.node-version` file.)
 3. **Save and Deploy.** Every push to `main` redeploys automatically.
-4. SPA deep links work via `public/_redirects` (`/* /index.html 200`), which is
-   copied into the build output.
+4. `wrangler.jsonc` serves `dist/kf-shop/browser` and sets
+   `not_found_handling: "single-page-application"` so deep links (`/cart`,
+   `/checkout`, `/product/:id`) resolve to the app instead of 404ing.
+   (Don't use a `_redirects` `/* /index.html 200` rule here — the Workers
+   static-assets deploy rejects it as an infinite loop.)
 
 ### Custom domain
 
