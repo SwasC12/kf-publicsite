@@ -20,11 +20,30 @@ npm start        # http://localhost:4200
 Products only appear once you've (a) published the Firestore rules and (b) added
 products from the Oil Tracker admin app — see setup below.
 
-## Deploy to Vercel
+## Deploy to Cloudflare Pages (free)
 
-Import the repo; `vercel.json` sets the build command and output dir
-(`dist/kf-shop/browser`). Then add the domain **kauafragrances.co.za** under
-Settings → Domains and point DNS as Vercel instructs.
+1. [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages** →
+   **Create** → **Pages** → **Connect to Git** → pick `SwasC12/kf-publicsite`.
+2. Build settings (set manually — don't rely on the Angular preset):
+   - **Framework preset:** None
+   - **Build command:** `npm run build`
+   - **Build output directory:** `dist/kf-shop/browser`
+   - (Node version is pinned to 22 by the `.node-version` file.)
+3. **Save and Deploy.** Every push to `main` redeploys automatically.
+4. SPA deep links work via `public/_redirects` (`/* /index.html 200`), which is
+   copied into the build output.
+
+### Custom domain
+
+In the Pages project → **Custom domains** → add **kauafragrances.co.za** (and
+`www`). Easiest if the domain's DNS is on Cloudflare (Cloudflare auto-configures
+the records); otherwise add the CNAME it shows you at your registrar.
+
+### After deploying
+
+Add the live URLs (the `*.pages.dev` one **and** your custom domain) to
+**Firebase → Authentication → Settings → Authorized domains** so Firebase works
+from the hosted site.
 
 ## Fill these in before going live
 
