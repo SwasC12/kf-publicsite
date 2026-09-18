@@ -1,59 +1,45 @@
-# KfShop
+# Kauā Fragrances — storefront
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 19.2.5.
+Public shop for **Kauā Fragrances** (www.kauafragrances.co.za). Customers browse
+fragrances, add to cart, and check out — payment is by **EFT** using an order
+reference (no card gateway). Orders and the product catalogue live in the same
+Firebase project as the **Oil Tracker** admin app, so managing stock/prices and
+seeing orders all happens from there.
 
-## Development server
+- Angular 19 (standalone + signals), SCSS
+- Firebase Firestore (`products` read, `orders` create)
+- Cart in localStorage; branding: crow mark, Montserrat wordmark, Playfair italic tagline
 
-To start a local development server, run:
-
-```bash
-ng serve
-```
-
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
-
-## Code scaffolding
-
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
+## Run locally
 
 ```bash
-ng generate component component-name
+npm install
+npm start        # http://localhost:4200
 ```
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+Products only appear once you've (a) published the Firestore rules and (b) added
+products from the Oil Tracker admin app — see setup below.
 
-```bash
-ng generate --help
-```
+## Deploy to Vercel
 
-## Building
+Import the repo; `vercel.json` sets the build command and output dir
+(`dist/kf-shop/browser`). Then add the domain **kauafragrances.co.za** under
+Settings → Domains and point DNS as Vercel instructs.
 
-To build the project run:
+## Fill these in before going live
 
-```bash
-ng build
-```
+- **`src/app/banking.config.ts`** — your real EFT/banking details (shown to
+  customers on the confirmation page) and contact email/phone.
 
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
+## Shared Firebase setup (do once, for BOTH apps)
 
-## Running unit tests
+The shop can't read products or take orders until the security rules are live and
+you have an admin login. Full steps are in the Oil Tracker repo
+(`Perfume/firestore.rules` + its README), summarised here:
 
-To execute unit tests with the [Karma](https://karma-runner.github.io) test runner, use the following command:
-
-```bash
-ng test
-```
-
-## Running end-to-end tests
-
-For end-to-end (e2e) testing, run:
-
-```bash
-ng e2e
-```
-
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+1. Firebase console → **Authentication** → enable **Email/Password**; add your
+   admin user and copy its **User UID**.
+2. Paste that UID into `firestore.rules` (`PASTE_ADMIN_UID`) and publish the rules
+   (Firestore Database → Rules).
+3. In the Oil Tracker app → **Admin** → sign in → **Products** → add fragrances.
+   They appear here instantly.
