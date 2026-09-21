@@ -67,10 +67,12 @@ import { Component } from '@angular/core';
       100% { opacity: 0; transform: translate(30px, -22px) scale(1.25); }
     }
     @keyframes markFlash { 0%, 60% { opacity: 0; } 15% { opacity: 1; } 40% { opacity: 0; } }
+    /* Calmer, but never frozen — visitors with reduce-motion still get gentle motion. */
     @media (prefers-reduced-motion: reduce) {
-      .level, .wave, .bubble, .spray, .mark { animation: none; }
-      .level { transform: translateY(6px); }
-      .spray { opacity: 0.6; }
+      .level { animation: rise 1.6s ease-out both, bob 5s 1.6s ease-in-out infinite; }
+      .wave { animation: slosh 4.5s linear infinite; }
+      .spray { animation: puff 4.5s ease-out infinite; }
+      .bubble, .mark { animation: none; opacity: 0; }
     }
   `],
 })
