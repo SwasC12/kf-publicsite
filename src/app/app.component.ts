@@ -4,6 +4,7 @@ import { CartService } from './cart.service';
 import { ContentService } from './content.service';
 import { SettingsService } from './settings.service';
 import { AuthService } from './auth.service';
+import { FavoritesService } from './favorites.service';
 import { IconComponent } from './icon.component';
 
 @Component({
@@ -20,8 +21,11 @@ import { IconComponent } from './icon.component';
         <span class="brand-name">Kauā</span>
       </a>
       <nav class="site-nav">
-        <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Shop</a>
-        <a routerLink="/track" routerLinkActive="active" class="nav-text">Track</a>
+        <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }" class="nav-text">Shop</a>
+        <a class="nav-icon cart-link" routerLink="/saved" routerLinkActive="active" aria-label="Saved" title="Saved">
+          <app-icon name="heart" [size]="20" />
+          @if (fav.count() > 0) { <span class="cart-badge">{{ fav.count() }}</span> }
+        </a>
         <a class="nav-icon" routerLink="/account" routerLinkActive="active" aria-label="Account" title="Account">
           <app-icon name="user" [size]="20" />
         </a>
@@ -31,6 +35,15 @@ import { IconComponent } from './icon.component';
         </a>
       </nav>
     </header>
+
+    <nav class="info-bar">
+      <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Shop</a>
+      <a routerLink="/about" routerLinkActive="active">About</a>
+      <a routerLink="/shipping" routerLinkActive="active">Shipping &amp; Returns</a>
+      <a routerLink="/faq" routerLinkActive="active">FAQ</a>
+      <a routerLink="/track" routerLinkActive="active">Track order</a>
+      <a routerLink="/contact" routerLinkActive="active">Contact</a>
+    </nav>
 
     <main class="site-main"><router-outlet /></main>
 
@@ -63,6 +76,7 @@ export class AppComponent {
   readonly content = inject(ContentService);
   readonly settings = inject(SettingsService);
   readonly auth = inject(AuthService);
+  readonly fav = inject(FavoritesService);
   readonly year = new Date().getFullYear();
 
   whatsapp(): string { return this.settings.settings().whatsappNumber || ''; }

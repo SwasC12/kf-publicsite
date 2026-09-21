@@ -4,6 +4,7 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { ProductsService } from './products.service';
 import { CartService } from './cart.service';
 import { SeoService } from './seo.service';
+import { FavoritesService } from './favorites.service';
 import { IconComponent } from './icon.component';
 import { Product, effectivePrice, isOnSale } from './models';
 import { formatPrice } from './util';
@@ -42,6 +43,7 @@ import { formatPrice } from './util';
             </div>
           }
           <h1>{{ p.name }}</h1>
+          @if (p.inspiredBy) { <p class="pd-inspired">Smells like <strong>{{ p.inspiredBy }}</strong></p> }
           @if (p.size) { <span class="p-size">{{ p.size }}</span> }
           <div class="pd-price">
             @if (onSale(p)) { <span class="was">{{ price(p.price) }}</span> }
@@ -56,8 +58,18 @@ import { formatPrice } from './util';
               <span class="qval">{{ qty() }}</span>
               <button class="qbtn" (click)="inc()"><app-icon name="plus" [size]="16" /></button>
             </div>
-            <button class="btn primary big" (click)="add(p)"><app-icon name="cart" [size]="18" /> Add to cart</button>
-          } @else { <div class="oos-note">Currently sold out</div> }
+            <div class="pd-actions">
+              <button class="btn primary big" (click)="add(p)"><app-icon name="cart" [size]="18" /> Add to cart</button>
+              <button class="btn big save-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)">
+                <app-icon name="heart" [size]="18" [filled]="fav.has(p.id)" /> {{ fav.has(p.id) ? 'Saved' : 'Save' }}
+              </button>
+            </div>
+          } @else {
+            <div class="oos-note">Currently sold out</div>
+            <button class="btn big save-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)">
+              <app-icon name="heart" [size]="18" [filled]="fav.has(p.id)" /> {{ fav.has(p.id) ? 'Saved' : 'Save' }}
+            </button>
+          }
 
           @if (p.notesTop || p.notesHeart || p.notesBase) {
             <div class="notes-block">
@@ -85,6 +97,7 @@ import { formatPrice } from './util';
 })
 export class ProductComponent {
   readonly svc = inject(ProductsService);
+  readonly fav = inject(FavoritesService);
   private cart = inject(CartService);
   private route = inject(ActivatedRoute);
 

@@ -1,10 +1,12 @@
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { RouterLink } from '@angular/router';
+import { FormsModule } from '@angular/forms';
 import { ProductsService } from './products.service';
 import { CartService } from './cart.service';
 import { ContentService } from './content.service';
 import { SeoService } from './seo.service';
+import { FavoritesService } from './favorites.service';
 import { IconComponent } from './icon.component';
 import { Product, effectivePrice, isOnSale } from './models';
 import { formatPrice } from './util';
@@ -12,7 +14,7 @@ import { formatPrice } from './util';
 @Component({
   selector: 'app-shop',
   standalone: true,
-  imports: [RouterLink, IconComponent, NgTemplateOutlet],
+  imports: [RouterLink, IconComponent, NgTemplateOutlet, FormsModule],
   template: `
     <!-- Hero -->
     <section class="hero" [class.has-image]="!!hero().heroImageUrl"
@@ -66,15 +68,27 @@ import { formatPrice } from './util';
     <section id="shop" class="shop-section reveal">
       <div class="shop-toolbar">
         <h2 class="section-title">Shop all</h2>
-        <input class="search" type="search" placeholder="Search fragrances…"
-               [value]="search()" (input)="search.set($any($event.target).value)" />
+        <div class="toolbar-right">
+          <input class="search" type="search" placeholder="Search name or 'smells like'…"
+                 [value]="search()" (input)="search.set($any($event.target).value)" />
+          <select class="sort-select" [ngModel]="sort()" (ngModelChange)="sort.set($event)" aria-label="Sort">
+            <option value="featured">Featured</option>
+            <option value="newest">Newest</option>
+            <option value="price-asc">Price: low to high</option>
+            <option value="price-desc">Price: high to low</option>
+            <option value="name">Name A–Z</option>
+          </select>
+        </div>
       </div>
 
-      @if (categories().length > 1) {
+      @if (categories().length > 1 || genders().length > 1) {
         <div class="chips">
-          <button class="chip" [class.active]="category() === 'all'" (click)="category.set('all')">All</button>
+          <button class="chip" [class.active]="category() === 'all' && gender() === 'all'" (click)="category.set('all'); gender.set('all')">All</button>
+          @for (g of genders(); track g) {
+            <button class="chip" [class.active]="gender() === g" (click)="gender.set(gender() === g ? 'all' : g)">{{ g }}</button>
+          }
           @for (c of categories(); track c) {
-            <button class="chip" [class.active]="category() === c" (click)="category.set(c)">{{ c }}</button>
+            <button class="chip" [class.active]="category() === c" (click)="category.set(category() === c ? 'all' : c)">{{ c }}</button>
           }
         </div>
       }
@@ -102,6 +116,10 @@ import { formatPrice } from './util';
     <!-- Reusable product card -->
     <ng-template #card let-p>
       <article class="card">
+        <button class="fav-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)"
+                [attr.aria-label]="fav.has(p.id) ? 'Remove from saved' : 'Save'">
+          <app-icon name="heart" [size]="18" [filled]="fav.has(p.id)" />
+        </button>
         <a class="thumb" [routerLink]="['/product', p.id]">
           @if (p.imageUrl) { <img [src]="p.imageUrl" [alt]="p.name" loading="lazy" (error)="imgErr($event)" /> }
           @else { <span class="thumb-fallback"><app-icon name="droplet" [size]="40" /></span> }
@@ -110,6 +128,7 @@ import { formatPrice } from './util';
         </a>
         <div class="card-body">
           <a class="p-name" [routerLink]="['/product', p.id]">{{ p.name }}</a>
+          @if (p.inspiredBy) { <span class="p-inspired">Smells like {{ p.inspiredBy }}</span> }
           @if (p.size) { <span class="p-size">{{ p.size }}</span> }
           <div class="p-foot">
             <span class="p-price">
@@ -128,10 +147,13 @@ import { formatPrice } from './util';
 export class ShopComponent implements OnDestroy {
   readonly svc = inject(ProductsService);
   readonly content = inject(ContentService);
+  readonly fav = inject(FavoritesService);
   private cart = inject(CartService);
 
   readonly search = signal('');
   readonly category = signal<'all' | string>('all');
+  readonly gender = signal<'all' | string>('all');
+  readonly sort = signal<'featured' | 'newest' | 'price-asc' | 'price-desc' | 'name'>('featured');
   readonly slide = signal(0);
   private timer: any;
 
@@ -144,14 +166,34 @@ export class ShopComponent implements OnDestroy {
     return [...set].sort();
   });
 
+  readonly genders = computed(() => {
+    const set = new Set<string>();
+    for (const p of this.svc.products()) if (p.gender) set.add(p.gender);
+    return [...set].sort();
+  });
+
   readonly featured = computed(() => this.svc.products().filter((p) => p.featured));
 
   readonly filtered = computed<Product[]>(() => {
     const q = this.search().trim().toLowerCase();
     const cat = this.category();
-    return this.svc.products()
+    const gen = this.gender();
+    const list = this.svc.products()
       .filter((p) => (cat === 'all' ? true : p.category === cat))
-      .filter((p) => (q ? p.name.toLowerCase().includes(q) : true));
+      .filter((p) => (gen === 'all' ? true : p.gender === gen))
+      .filter((p) => (q
+        ? p.name.toLowerCase().includes(q) || (p.inspiredBy ?? '').toLowerCase().includes(q)
+        : true));
+    const s = this.sort();
+    const sorted = [...list];
+    switch (s) {
+      case 'price-asc': sorted.sort((a, b) => effectivePrice(a) - effectivePrice(b)); break;
+      case 'price-desc': sorted.sort((a, b) => effectivePrice(b) - effectivePrice(a)); break;
+      case 'name': sorted.sort((a, b) => a.name.localeCompare(b.name)); break;
+      case 'newest': sorted.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); break;
+      case 'featured': sorted.sort((a, b) => Number(!!b.featured) - Number(!!a.featured)); break;
+    }
+    return sorted;
   });
 
   price = formatPrice;

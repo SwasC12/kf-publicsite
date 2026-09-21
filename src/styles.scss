@@ -455,3 +455,56 @@ a { color: inherit; }
 /* ---------- Order-placed mixing animation ---------- */
 .confirm-head app-mixing { display: inline-block; margin: 0 auto; }
 .mixing-msg { font-family: var(--serif); font-style: italic; font-size: 17px; color: var(--ink); margin: 4px 0 0; }
+
+/* ---------- Info / trust nav bar ---------- */
+.info-bar {
+  display: flex; flex-wrap: wrap; gap: 4px 20px; justify-content: center;
+  padding: 9px 16px; background: var(--surface); border-bottom: 1px solid var(--line);
+  position: sticky; top: 68px; z-index: 15;
+}
+.info-bar a { text-decoration: none; color: var(--ink-dim); font-size: 13px; font-weight: 600; }
+.info-bar a.active, .info-bar a:hover { color: var(--ink); }
+
+/* ---------- Shop toolbar / sort ---------- */
+.toolbar-right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.sort-select {
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  border-radius: 999px; padding: 10px 14px; font-size: 14px; font-family: inherit; cursor: pointer;
+}
+.sort-select:focus { outline: 2px solid #eaddcd; border-color: var(--accent); }
+
+/* ---------- Favourite heart on cards ---------- */
+.card { position: relative; }
+.fav-btn {
+  position: absolute; top: 10px; right: 10px; z-index: 3;
+  width: 36px; height: 36px; border-radius: 50%; border: 0; cursor: pointer;
+  background: rgba(255,255,255,0.9); color: var(--ink-dim);
+  display: grid; place-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  transition: transform 0.12s, color 0.15s;
+}
+.fav-btn:hover { transform: scale(1.1); }
+.fav-btn.on { color: #c0463f; }
+
+.p-inspired { font-size: 12px; color: var(--ink-dim); font-style: italic; }
+.pd-inspired { color: var(--ink-dim); font-style: italic; margin: 4px 0 0; }
+.pd-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.pd-actions .btn.big { width: auto; flex: 1; min-width: 150px; }
+.save-btn { border-color: var(--line); }
+.save-btn.on { color: #c0463f; border-color: #e7b7b3; }
+
+@media (max-width: 560px) {
+  .info-bar { top: 62px; gap: 2px 14px; }
+  .toolbar-right { width: 100%; }
+  .toolbar-right .search { flex: 1; }
+}
+
+/* ---------- Micro-animations ---------- */
+.cart-badge { animation: badgePop 0.25s ease; }
+@keyframes badgePop { 0% { transform: scale(0.4); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+.add-btn:active, .btn:active, .chip:active, .qbtn:active { transform: translateY(1px) scale(0.98); }
+.chip, .add-btn { transition: transform 0.1s, background 0.15s, color 0.15s, border-color 0.15s; }
+.nav-icon { transition: transform 0.12s; }
+.nav-icon:active { transform: scale(0.9); }
+@media (prefers-reduced-motion: reduce) {
+  .cart-badge { animation: none; }
+}

@@ -14,6 +14,7 @@ export interface Product {
   gallery?: string[]; // extra image URLs
   category?: string; // e.g. "Men", "Women", "Unisex", "Oud"
   gender?: string; // Men | Women | Unisex
+  inspiredBy?: string; // "smells like" — e.g. "Tom Ford Oud Wood"
   notesTop?: string;
   notesHeart?: string;
   notesBase?: string;
