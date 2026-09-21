@@ -1,8 +1,8 @@
 import { Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { OrdersService } from './orders.service';
+import { SettingsService } from './settings.service';
 import { IconComponent } from './icon.component';
-import { banking } from './banking.config';
 import { formatPrice } from './util';
 
 @Component({
@@ -55,6 +55,8 @@ import { formatPrice } from './util';
               <span>{{ price(i.price * i.qty) }}</span>
             </div>
           }
+          @if (o.subtotal != null) { <div class="sum-row"><span>Subtotal</span><span>{{ price(o.subtotal) }}</span></div> }
+          <div class="sum-row"><span>{{ o.deliveryMethod === 'collection' ? 'Collection' : 'Delivery' }}</span><span>{{ (o.deliveryFee || 0) === 0 ? 'Free' : price(o.deliveryFee!) }}</span></div>
           <div class="sum-total"><span>Total</span><strong>{{ price(o.total) }}</strong></div>
         </div>
 
@@ -70,7 +72,8 @@ import { formatPrice } from './util';
 })
 export class ConfirmationComponent {
   readonly orders = inject(OrdersService);
-  readonly bank = banking;
+  private settings = inject(SettingsService);
+  get bank() { return this.settings.bankingDetails(); }
   readonly copied = signal(false);
   price = formatPrice;
 

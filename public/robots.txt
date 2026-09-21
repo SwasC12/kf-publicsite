@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /account
+Disallow: /checkout
+Disallow: /cart
+
+Sitemap: https://kauafragrances.co.za/sitemap.xml

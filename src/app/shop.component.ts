@@ -4,6 +4,7 @@ import { RouterLink } from '@angular/router';
 import { ProductsService } from './products.service';
 import { CartService } from './cart.service';
 import { ContentService } from './content.service';
+import { SeoService } from './seo.service';
 import { IconComponent } from './icon.component';
 import { Product, effectivePrice, isOnSale } from './models';
 import { formatPrice } from './util';
@@ -157,7 +158,10 @@ export class ShopComponent implements OnDestroy {
   eff = effectivePrice;
   onSale = isOnSale;
 
+  private seo = inject(SeoService);
+
   constructor() {
+    this.seo.page('Kauā Fragrances');
     this.timer = setInterval(() => {
       const n = this.banners().length;
       if (n > 1) this.slide.update((i) => (i + 1) % n);

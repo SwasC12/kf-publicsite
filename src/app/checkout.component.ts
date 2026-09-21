@@ -1,4 +1,4 @@
-import { Component, effect, inject } from '@angular/core';
+import { Component, computed, effect, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
@@ -6,7 +6,8 @@ import { CartService } from './cart.service';
 import { OrdersService } from './orders.service';
 import { AuthService } from './auth.service';
 import { CustomerService } from './customer.service';
-import { Address, emptyAddress } from './models';
+import { SettingsService } from './settings.service';
+import { Address, DeliveryMethod, emptyAddress } from './models';
 import { formatPrice } from './util';
 
 @Component({
@@ -16,6 +17,8 @@ import { formatPrice } from './util';
   template: `
     @if (cart.items().length === 0) {
       <div class="notice"><p>Your cart is empty.</p><a class="btn primary" routerLink="/">Browse fragrances</a></div>
+    } @else if (settings.settings().storeOpen === false) {
+      <div class="notice"><h2 class="section-title">We're currently closed</h2><p>{{ settings.settings().storeClosedMessage || 'The shop is temporarily not taking orders. Please check back soon.' }}</p><a class="btn" routerLink="/">Back to shop</a></div>
     } @else {
       <h1 class="page-title">Checkout</h1>
       @if (!auth.isLoggedIn()) {
@@ -28,8 +31,27 @@ import { formatPrice } from './util';
           <label>Email*<input type="email" name="email" [(ngModel)]="email" required autocomplete="email" /></label>
           <label>Phone / WhatsApp*<input type="tel" name="phone" [(ngModel)]="phone" required autocomplete="tel" /></label>
 
-          <h2 class="block-title">Delivery address</h2>
-          <ng-container *ngTemplateOutlet="addr; context: { $implicit: delivery }" />
+          <h2 class="block-title">Delivery</h2>
+          <div class="method-toggle">
+            @if (settings.settings().deliveryEnabled !== false) {
+              <label class="method" [class.on]="method() === 'delivery'">
+                <input type="radio" name="method" value="delivery" [ngModel]="method()" (ngModelChange)="method.set('delivery')" />
+                <span>Deliver to me <em>{{ feeLabel() }}</em></span>
+              </label>
+            }
+            @if (settings.settings().collectionEnabled !== false) {
+              <label class="method" [class.on]="method() === 'collection'">
+                <input type="radio" name="method" value="collection" [ngModel]="method()" (ngModelChange)="method.set('collection')" />
+                <span>Collect <em>Free</em></span>
+              </label>
+            }
+          </div>
+
+          @if (method() === 'delivery') {
+            <ng-container *ngTemplateOutlet="addr; context: { $implicit: delivery }" />
+          } @else {
+            <p class="pay-info">{{ settings.settings().collectionNote || 'We\\'ll arrange collection details with you after your order.' }}</p>
+          }
 
           <label>Order note (optional)<textarea name="note" rows="2" [(ngModel)]="note" placeholder="Delivery instructions, preferences…"></textarea></label>
 
@@ -45,7 +67,12 @@ import { formatPrice } from './util';
           @for (i of cart.items(); track i.productId) {
             <div class="sum-row"><span>{{ i.qty }} × {{ i.name }}@if (i.size) { <span class="dim"> ({{ i.size }})</span> }</span><span>{{ price(i.price * i.qty) }}</span></div>
           }
-          <div class="sum-total"><span>Total</span><strong>{{ price(cart.total()) }}</strong></div>
+          <div class="sum-row"><span>Subtotal</span><span>{{ price(cart.total()) }}</span></div>
+          <div class="sum-row"><span>{{ method() === 'collection' ? 'Collection' : 'Delivery' }}</span><span>{{ fee() === 0 ? 'Free' : price(fee()) }}</span></div>
+          <div class="sum-total"><span>Total</span><strong>{{ price(cart.total() + fee()) }}</strong></div>
+          @if (method() === 'delivery' && fee() > 0 && threshold()) {
+            <p class="ship-hint">Spend {{ price(threshold()! - cart.total()) }} more for free delivery.</p>
+          }
         </aside>
       </div>
     }
@@ -68,16 +95,25 @@ export class CheckoutComponent {
   readonly cart = inject(CartService);
   readonly orders = inject(OrdersService);
   readonly auth = inject(AuthService);
+  readonly settings = inject(SettingsService);
   private cust = inject(CustomerService);
   private router = inject(Router);
 
   name = ''; email = ''; phone = ''; note = '';
   delivery: Address = emptyAddress();
+  readonly method = signal<DeliveryMethod>('delivery');
+
+  readonly threshold = computed(() => this.settings.settings().freeDeliveryThreshold ?? null);
+  readonly fee = computed(() => (this.method() === 'delivery' ? this.settings.deliveryFeeFor(this.cart.total()) : 0));
 
   price = formatPrice;
 
   constructor() {
-    // Prefill from the signed-in customer's saved profile.
+    // Default to whichever method is enabled.
+    effect(() => {
+      const s = this.settings.settings();
+      if (s.deliveryEnabled === false && s.collectionEnabled !== false) this.method.set('collection');
+    });
     effect(() => {
       const p = this.cust.profile();
       if (p) {
@@ -89,8 +125,15 @@ export class CheckoutComponent {
     });
   }
 
+  feeLabel(): string {
+    const f = this.settings.deliveryFeeFor(this.cart.total());
+    return f === 0 ? 'Free' : formatPrice(f);
+  }
+
   valid(): boolean {
-    return !!this.name.trim() && !!this.email.trim() && !!this.phone.trim() && !!this.delivery.line1.trim() && !!this.delivery.city.trim();
+    const base = !!this.name.trim() && !!this.email.trim() && !!this.phone.trim();
+    if (this.method() === 'collection') return base;
+    return base && !!this.delivery.line1.trim() && !!this.delivery.city.trim();
   }
 
   async place(): Promise<void> {
@@ -100,6 +143,8 @@ export class CheckoutComponent {
       this.delivery,
       this.cart.items(),
       this.auth.user()?.uid ?? null,
+      this.method(),
+      this.fee(),
     );
     if (order) {
       this.cart.clear();

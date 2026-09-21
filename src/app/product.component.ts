@@ -1,8 +1,9 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal } from '@angular/core';
 import { RouterLink, ActivatedRoute } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ProductsService } from './products.service';
 import { CartService } from './cart.service';
+import { SeoService } from './seo.service';
 import { IconComponent } from './icon.component';
 import { Product, effectivePrice, isOnSale } from './models';
 import { formatPrice } from './util';
@@ -94,6 +95,15 @@ export class ProductComponent {
     const id = this.id()?.get('id');
     return id ? this.svc.products().find((p) => p.id === id) : undefined;
   });
+
+  private seo = inject(SeoService);
+
+  constructor() {
+    effect(() => {
+      const p = this.product();
+      if (p) this.seo.product(p);
+    });
+  }
 
   price = formatPrice;
   eff = effectivePrice;

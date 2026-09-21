@@ -1,8 +1,8 @@
 import { Injectable, inject, signal } from '@angular/core';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { getDb } from './firebase';
 import { EmailService } from './email.service';
-import { Address, CartItem, Order, OrderContact, OrderItem } from './models';
+import { Address, CartItem, DeliveryMethod, Order, OrderContact, OrderItem } from './models';
 
 const LAST_KEY = 'kf.lastorder.v1';
 
@@ -19,7 +19,14 @@ export class OrdersService {
   readonly placing = signal(false);
   readonly error = signal<string | null>(null);
 
-  async place(contact: OrderContact, delivery: Address, items: CartItem[], uid: string | null): Promise<Order | null> {
+  async place(
+    contact: OrderContact,
+    delivery: Address,
+    items: CartItem[],
+    uid: string | null,
+    deliveryMethod: DeliveryMethod,
+    deliveryFee: number,
+  ): Promise<Order | null> {
     if (!items.length) return null;
     this.placing.set(true);
     this.error.set(null);
@@ -27,19 +34,29 @@ export class OrdersService {
     const orderItems: OrderItem[] = items.map((i) => ({
       productId: i.productId, name: i.name, size: i.size, price: i.price, qty: i.qty,
     }));
-    const total = orderItems.reduce((n, i) => n + i.price * i.qty, 0);
+    const subtotal = orderItems.reduce((n, i) => n + i.price * i.qty, 0);
+    const fee = deliveryMethod === 'delivery' ? deliveryFee : 0;
+    const total = subtotal + fee;
     const reference = makeReference();
     const now = Date.now();
 
     try {
       const ref = await addDoc(collection(getDb(), 'orders'), {
-        reference, uid: uid ?? null, customer: contact, delivery, items: orderItems,
-        total, status: 'pending', createdAt: now, updatedAt: now, serverCreatedAt: serverTimestamp(),
+        reference, uid: uid ?? null, customer: contact, delivery, deliveryMethod, deliveryFee: fee,
+        subtotal, items: orderItems, total, status: 'pending', createdAt: now, updatedAt: now,
+        serverCreatedAt: serverTimestamp(),
       });
-      const order: Order = { id: ref.id, reference, uid, customer: contact, delivery, items: orderItems, total, status: 'pending', createdAt: now, updatedAt: now };
+      // Public status doc so customers can track by reference without an account.
+      try {
+        await setDoc(doc(getDb(), 'orderStatus', reference), {
+          reference, status: 'pending', total, createdAt: now, updatedAt: now,
+        });
+      } catch { /* non-fatal */ }
+
+      const order: Order = { id: ref.id, reference, uid, customer: contact, delivery, deliveryMethod, deliveryFee: fee, subtotal, items: orderItems, total, status: 'pending', createdAt: now, updatedAt: now };
       this.lastOrder.set(order);
       this.writeLast(order);
-      this.email.orderPlaced(order); // fire-and-forget confirmation + shop notification
+      this.email.orderPlaced(order);
       return order;
     } catch {
       this.error.set('Sorry, we could not place your order. Please try again.');

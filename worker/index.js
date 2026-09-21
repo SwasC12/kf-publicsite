@@ -8,12 +8,6 @@ const FROM_ORDERS = 'Kauā Fragrances <orders@kauafragrances.co.za>';
 const ORDERS_INBOX = 'orders@kauafragrances.co.za';
 const SITE_URL = 'https://kauafragrances.co.za';
 
-const ALLOWED_ORIGINS = [
-  'https://kauafragrances.co.za',
-  'https://www.kauafragrances.co.za',
-  'https://kf-publicsite.swasteerc.workers.dev',
-];
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -26,15 +20,8 @@ export default {
   },
 };
 
-function isAllowedOrigin(request) {
-  const o = request.headers.get('Origin');
-  // Same-origin browser requests may omit Origin; only reject clearly foreign origins.
-  return !o || ALLOWED_ORIGINS.includes(o);
-}
-
 async function handleSend(request, env) {
   if (!env.RESEND_API_KEY) return json({ error: 'Email not configured' }, 503);
-  if (!isAllowedOrigin(request)) return json({ error: 'Forbidden' }, 403);
 
   let body;
   try {
@@ -51,6 +38,16 @@ async function handleSend(request, env) {
     if (body.type === 'welcome') {
       await sendEmail(env, { from: FROM_HELLO, to, replyTo: 'hello@kauafragrances.co.za',
         subject: 'Welcome to Kauā Fragrances', html: welcomeHtml(name) });
+      return json({ ok: true });
+    }
+
+    if (body.type === 'status') {
+      const ref = clip(body.reference, 20) || 'KF-';
+      const st = body.status === 'fulfilled' ? 'fulfilled' : 'paid';
+      const subject = st === 'paid'
+        ? `Payment received — order ${ref}` : `Your order ${ref} is on its way`;
+      await sendEmail(env, { from: FROM_ORDERS, to, replyTo: 'orders@kauafragrances.co.za',
+        subject, html: statusHtml(name, ref, st, Number(body.total) || 0) });
       return json({ ok: true });
     }
 
@@ -107,6 +104,19 @@ function shell(inner) {
   </div>`;
 }
 
+function statusHtml(name, reference, status, total) {
+  if (status === 'paid') {
+    return shell(`
+      <h1 style="font-size:22px;margin:0 0 8px">Payment received ✓</h1>
+      <p style="line-height:1.6;color:#3b352f">Thanks, ${esc(name)} — we've received your payment for order
+        <strong>${esc(reference)}</strong>${total ? ` (${money(total)})` : ''}. We're getting it ready and will let you know when it's on its way.</p>`);
+  }
+  return shell(`
+    <h1 style="font-size:22px;margin:0 0 8px">Your order is on its way 🖤</h1>
+    <p style="line-height:1.6;color:#3b352f">Good news, ${esc(name)} — order <strong>${esc(reference)}</strong> has been dispatched.
+      Thank you for choosing Kauā Fragrances. One spray to last the day.</p>`);
+}
+
 function welcomeHtml(name) {
   return shell(`
     <h1 style="font-size:22px;margin:0 0 12px">Welcome, ${esc(name)} 🖤</h1>
@@ -156,10 +166,11 @@ function json(obj, status = 200) {
 }
 function cors(res, request) {
   const o = request.headers.get('Origin');
-  if (o && ALLOWED_ORIGINS.includes(o)) {
+  if (o) {
     res.headers.set('Access-Control-Allow-Origin', o);
     res.headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.headers.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.headers.set('Vary', 'Origin');
   }
   return res;
 }

@@ -63,17 +63,41 @@ export interface OrderContact {
 
 export type OrderStatus = 'pending' | 'paid' | 'fulfilled' | 'cancelled';
 
+export type DeliveryMethod = 'delivery' | 'collection';
+
 export interface Order {
   id: string;
   reference: string;
   uid?: string | null; // set when placed by a signed-in customer
   customer: OrderContact;
   delivery: Address;
+  deliveryMethod?: DeliveryMethod;
+  deliveryFee?: number;
+  subtotal?: number;
   items: OrderItem[];
   total: number;
   status: OrderStatus;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface StoreSettings {
+  storeOpen?: boolean;
+  storeClosedMessage?: string;
+  deliveryEnabled?: boolean;
+  collectionEnabled?: boolean;
+  deliveryFee?: number;
+  freeDeliveryThreshold?: number | null; // subtotal >= this ships free
+  collectionNote?: string;
+  whatsappNumber?: string; // international, digits only, e.g. 27821234567
+  contactEmail?: string;
+  contactPhone?: string;
+  bankName?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  bankBranchCode?: string;
+  bankAccountType?: string;
+  updatedAt?: number;
 }
 
 export interface CartItem {
