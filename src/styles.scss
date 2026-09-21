@@ -386,3 +386,13 @@ a { color: inherit; }
   .cart-summary { max-width: none; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
 }
+
+/* ---------- Password show/hide ---------- */
+.pw-field { position: relative; display: block; margin-top: 5px; }
+.pw-field input { margin-top: 0 !important; padding-right: 44px; }
+.pw-toggle {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  background: none; border: 0; color: var(--ink-dim); cursor: pointer;
+  padding: 4px; display: inline-flex; line-height: 0;
+}
+.pw-toggle:hover { color: var(--ink); }

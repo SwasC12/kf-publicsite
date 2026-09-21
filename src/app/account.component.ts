@@ -23,7 +23,14 @@ import { formatPrice } from './util';
             <label>Full name<input type="text" name="n" [(ngModel)]="name" required autocomplete="name" /></label>
           }
           <label>Email<input type="email" name="e" [(ngModel)]="email" required autocomplete="email" /></label>
-          <label>Password<input type="password" name="p" [(ngModel)]="password" required autocomplete="{{ mode()==='in' ? 'current-password' : 'new-password' }}" /></label>
+          <label>Password
+            <span class="pw-field">
+              <input [type]="showPw() ? 'text' : 'password'" name="p" [(ngModel)]="password" required autocomplete="{{ mode()==='in' ? 'current-password' : 'new-password' }}" />
+              <button type="button" class="pw-toggle" (click)="showPw.set(!showPw())" [attr.aria-label]="showPw() ? 'Hide password' : 'Show password'">
+                <app-icon [name]="showPw() ? 'eye-off' : 'eye'" [size]="18" />
+              </button>
+            </span>
+          </label>
           @if (auth.error()) { <p class="form-error">{{ auth.error() }}</p> }
           <button type="submit" class="btn primary big" [disabled]="auth.busy()">
             {{ auth.busy() ? 'Please wait…' : (mode() === 'in' ? 'Sign in' : 'Create account') }}
@@ -100,6 +107,7 @@ export class AccountComponent {
   private emailSvc = inject(EmailService);
 
   readonly mode = signal<'in' | 'up'>('in');
+  readonly showPw = signal(false);
   name = ''; email = ''; password = '';
 
   pName = ''; pPhone = '';
