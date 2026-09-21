@@ -3,19 +3,20 @@ import { RouterLink } from '@angular/router';
 import { OrdersService } from './orders.service';
 import { SettingsService } from './settings.service';
 import { IconComponent } from './icon.component';
+import { MixingComponent } from './mixing.component';
 import { formatPrice } from './util';
 
 @Component({
   selector: 'app-confirmation',
   standalone: true,
-  imports: [RouterLink, IconComponent],
+  imports: [RouterLink, IconComponent, MixingComponent],
   template: `
     @if (orders.lastOrder(); as o) {
       <div class="confirm">
         <div class="confirm-head">
-          <app-icon name="check-circle" [size]="52" />
-          <h1>Order placed!</h1>
-          <p>Thank you, {{ o.customer.name }}. We've received your order.</p>
+          <app-mixing />
+          <h1>Thank you, {{ o.customer.name }}!</h1>
+          <p class="mixing-msg">Your perfume is being mixed and prepared.</p>
         </div>
 
         <div class="ref-box">

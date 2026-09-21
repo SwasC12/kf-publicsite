@@ -451,3 +451,7 @@ a { color: inherit; }
 }
 .track-steps li.done .tick { background: var(--ok); border-color: var(--ok); }
 .track-total { margin-top: 16px; color: var(--ink-dim); }
+
+/* ---------- Order-placed mixing animation ---------- */
+.confirm-head app-mixing { display: inline-block; margin: 0 auto; }
+.mixing-msg { font-family: var(--serif); font-style: italic; font-size: 17px; color: var(--ink); margin: 4px 0 0; }
