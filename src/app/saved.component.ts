@@ -5,7 +5,7 @@ import { CartService } from './cart.service';
 import { SeoService } from './seo.service';
 import { IconComponent } from './icon.component';
 import { Product, effectivePrice, isOnSale } from './models';
-import { formatPrice } from './util';
+import { formatPrice, productImage } from './util';
 
 @Component({
   selector: 'app-saved',
@@ -27,8 +27,7 @@ import { formatPrice } from './util';
               <app-icon name="heart" [size]="18" [filled]="true" />
             </button>
             <a class="thumb" [routerLink]="['/product', p.id]">
-              @if (p.imageUrl) { <img [src]="p.imageUrl" [alt]="p.name" loading="lazy" (error)="imgErr($event)" /> }
-              @else { <span class="thumb-fallback"><app-icon name="droplet" [size]="40" /></span> }
+              <img [src]="img(p)" [alt]="p.name" loading="lazy" (error)="imgErr($event)" />
               @if (onSale(p)) { <span class="sale-badge">Sale</span> }
               @if (!p.inStock) { <span class="oos-badge">Sold out</span> }
             </a>
@@ -58,5 +57,6 @@ export class SavedComponent {
   price = formatPrice;
   eff = effectivePrice;
   onSale = isOnSale;
+  img = productImage;
   imgErr(ev: Event): void { (ev.target as HTMLImageElement).style.visibility = 'hidden'; }
 }

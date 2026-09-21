@@ -75,11 +75,20 @@ export interface Order {
   deliveryMethod?: DeliveryMethod;
   deliveryFee?: number;
   subtotal?: number;
+  discountCode?: string;
+  discountAmount?: number;
   items: OrderItem[];
   total: number;
   status: OrderStatus;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface Discount {
+  code: string;
+  type: 'percent' | 'fixed';
+  value: number;
+  active: boolean;
 }
 
 export interface StoreSettings {

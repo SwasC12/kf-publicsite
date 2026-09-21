@@ -58,6 +58,7 @@ import { formatPrice } from './util';
           }
           @if (o.subtotal != null) { <div class="sum-row"><span>Subtotal</span><span>{{ price(o.subtotal) }}</span></div> }
           <div class="sum-row"><span>{{ o.deliveryMethod === 'collection' ? 'Collection' : 'Delivery' }}</span><span>{{ (o.deliveryFee || 0) === 0 ? 'Free' : price(o.deliveryFee!) }}</span></div>
+          @if (o.discountAmount) { <div class="sum-row"><span>Discount ({{ o.discountCode }})</span><span>−{{ price(o.discountAmount) }}</span></div> }
           <div class="sum-total"><span>Total</span><strong>{{ price(o.total) }}</strong></div>
         </div>
 

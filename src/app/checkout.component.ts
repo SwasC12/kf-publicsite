@@ -2,12 +2,14 @@ import { Component, computed, effect, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
+import { doc, getDoc } from 'firebase/firestore';
+import { getDb } from './firebase';
 import { CartService } from './cart.service';
 import { OrdersService } from './orders.service';
 import { AuthService } from './auth.service';
 import { CustomerService } from './customer.service';
 import { SettingsService } from './settings.service';
-import { Address, DeliveryMethod, emptyAddress } from './models';
+import { Address, DeliveryMethod, Discount, emptyAddress } from './models';
 import { formatPrice } from './util';
 
 @Component({
@@ -55,6 +57,18 @@ import { formatPrice } from './util';
 
           <label>Order note (optional)<textarea name="note" rows="2" [(ngModel)]="note" placeholder="Delivery instructions, preferences…"></textarea></label>
 
+          <h2 class="block-title">Promo code</h2>
+          <div class="promo-row">
+            <input type="text" name="promo" [(ngModel)]="promo" placeholder="Enter code" style="text-transform:uppercase" />
+            @if (applied()) {
+              <button type="button" class="btn" (click)="clearPromo()">Remove</button>
+            } @else {
+              <button type="button" class="btn" (click)="applyPromo()" [disabled]="!promo.trim()">Apply</button>
+            }
+          </div>
+          @if (applied()) { <p class="promo-ok">Code {{ applied()!.code }} applied — {{ discountAmount() > 0 ? '−' + price(discountAmount()) : 'no discount' }}</p> }
+          @if (promoError()) { <p class="form-error">{{ promoError() }}</p> }
+
           <p class="pay-info">Payment is by <strong>EFT / bank transfer</strong>. After placing your order you'll get a reference and our banking details — no card needed.</p>
           @if (orders.error()) { <div class="notice error">{{ orders.error() }}</div> }
           <button type="submit" class="btn primary big" [disabled]="!valid() || orders.placing()">
@@ -69,7 +83,8 @@ import { formatPrice } from './util';
           }
           <div class="sum-row"><span>Subtotal</span><span>{{ price(cart.total()) }}</span></div>
           <div class="sum-row"><span>{{ method() === 'collection' ? 'Collection' : 'Delivery' }}</span><span>{{ fee() === 0 ? 'Free' : price(fee()) }}</span></div>
-          <div class="sum-total"><span>Total</span><strong>{{ price(cart.total() + fee()) }}</strong></div>
+          @if (discountAmount() > 0) { <div class="sum-row"><span>Discount ({{ applied()!.code }})</span><span>−{{ price(discountAmount()) }}</span></div> }
+          <div class="sum-total"><span>Total</span><strong>{{ price(grandTotal()) }}</strong></div>
           @if (method() === 'delivery' && fee() > 0 && threshold()) {
             <p class="ship-hint">Spend {{ price(threshold()! - cart.total()) }} more for free delivery.</p>
           }
@@ -102,11 +117,40 @@ export class CheckoutComponent {
   name = ''; email = ''; phone = ''; note = '';
   delivery: Address = emptyAddress();
   readonly method = signal<DeliveryMethod>('delivery');
+  promo = '';
+  readonly applied = signal<Discount | null>(null);
+  readonly promoError = signal<string | null>(null);
 
   readonly threshold = computed(() => this.settings.settings().freeDeliveryThreshold ?? null);
   readonly fee = computed(() => (this.method() === 'delivery' ? this.settings.deliveryFeeFor(this.cart.total()) : 0));
+  readonly discountAmount = computed(() => {
+    const d = this.applied();
+    if (!d) return 0;
+    const sub = this.cart.total();
+    const amt = d.type === 'percent' ? (sub * d.value) / 100 : d.value;
+    return Math.min(Math.round(amt * 100) / 100, sub);
+  });
+  readonly grandTotal = computed(() => Math.max(0, this.cart.total() + this.fee() - this.discountAmount()));
 
   price = formatPrice;
+
+  async applyPromo(): Promise<void> {
+    const code = this.promo.trim().toUpperCase();
+    if (!code) return;
+    this.promoError.set(null);
+    try {
+      const snap = await getDoc(doc(getDb(), 'discounts', code));
+      if (snap.exists() && (snap.data() as Discount).active) {
+        this.applied.set({ code, ...(snap.data() as Omit<Discount, 'code'>) });
+      } else {
+        this.applied.set(null);
+        this.promoError.set('That code is not valid.');
+      }
+    } catch {
+      this.promoError.set('Could not check that code.');
+    }
+  }
+  clearPromo(): void { this.applied.set(null); this.promo = ''; this.promoError.set(null); }
 
   constructor() {
     // Default to whichever method is enabled.
@@ -145,6 +189,8 @@ export class CheckoutComponent {
       this.auth.user()?.uid ?? null,
       this.method(),
       this.fee(),
+      this.applied()?.code,
+      this.discountAmount(),
     );
     if (order) {
       this.cart.clear();

@@ -7,7 +7,7 @@ import { SeoService } from './seo.service';
 import { FavoritesService } from './favorites.service';
 import { IconComponent } from './icon.component';
 import { Product, effectivePrice, isOnSale } from './models';
-import { formatPrice } from './util';
+import { formatPrice, placeholderFor } from './util';
 
 @Component({
   selector: 'app-product',
@@ -123,7 +123,8 @@ export class ProductComponent {
   onSale = isOnSale;
 
   images(p: Product): string[] {
-    return [p.imageUrl, ...(p.gallery ?? [])].filter((x): x is string => !!x);
+    const imgs = [p.imageUrl, ...(p.gallery ?? [])].filter((x): x is string => !!x);
+    return imgs.length ? imgs : [placeholderFor(p.gender)];
   }
   mainImage(p: Product): string | undefined {
     return this.images(p)[this.activeImg()] ?? this.images(p)[0];

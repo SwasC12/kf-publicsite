@@ -508,3 +508,9 @@ a { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .cart-badge { animation: none; }
 }
+
+/* ---------- Promo code ---------- */
+.promo-row { display: flex; gap: 10px; margin-bottom: 8px; }
+.promo-row input { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; font-size: 15px; font-family: inherit; }
+.promo-row input:focus { outline: 2px solid #eaddcd; border-color: var(--accent); }
+.promo-ok { color: var(--ok); font-size: 13px; font-weight: 600; margin: 0 0 10px; }
