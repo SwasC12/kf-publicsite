@@ -1,10 +1,12 @@
 {
-  // Cloudflare Workers static-assets config for the storefront.
-  // Serves the built Angular app; SPA fallback sends deep links to index.html.
+  // Cloudflare Worker: serves the built Angular app AND a small email API.
+  // Static assets are served via the ASSETS binding; /api/* is handled by the Worker.
   "name": "kf-publicsite",
   "compatibility_date": "2025-09-18",
+  "main": "worker/index.js",
   "assets": {
     "directory": "./dist/kf-shop/browser",
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   }
 }

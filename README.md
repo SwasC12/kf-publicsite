@@ -41,6 +41,27 @@ In the Pages project → **Custom domains** → add **kauafragrances.co.za** (an
 `www`). Easiest if the domain's DNS is on Cloudflare (Cloudflare auto-configures
 the records); otherwise add the CNAME it shows you at your registrar.
 
+## Transactional email (Resend)
+
+Sign-up and order emails are sent by the Worker (`worker/index.js`) via
+[Resend](https://resend.com) — the API key is a Worker **secret**, never in the
+browser. Sends a welcome email (from hello@) on sign-up and an order confirmation
+(from orders@) on checkout, plus a "new order" heads-up to orders@.
+
+One-time setup (free tier: 3,000 emails/month):
+
+1. Create a free Resend account → **Domains → Add domain** → `kauafragrances.co.za`.
+2. Resend shows a few DNS records (DKIM + SPF, usually on a `send` subdomain, and
+   a DMARC record). Add them in **Cloudflare → DNS** (leave your Zoho MX/TXT
+   alone — Resend uses its own subdomain for sending, so they don't clash). Wait
+   for Resend to mark the domain **Verified**.
+3. Resend → **API Keys → Create** → copy the key.
+4. Cloudflare → **Workers & Pages → kf-publicsite → Settings → Variables and
+   Secrets → Add** → name `RESEND_API_KEY`, type **Secret**, paste the key → Save.
+   (Or `npx wrangler secret put RESEND_API_KEY`.)
+5. Redeploy (a push does this automatically). Until the key is set, the endpoint
+   returns 503 and the site simply skips sending — nothing breaks.
+
 ### After deploying
 
 Add the live URLs (the `*.pages.dev` one **and** your custom domain) to

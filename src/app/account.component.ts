@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { AuthService } from './auth.service';
 import { CustomerService } from './customer.service';
+import { EmailService } from './email.service';
 import { IconComponent } from './icon.component';
 import { Address, emptyAddress } from './models';
 import { formatPrice } from './util';
@@ -96,6 +97,7 @@ import { formatPrice } from './util';
 export class AccountComponent {
   readonly auth = inject(AuthService);
   readonly cust = inject(CustomerService);
+  private emailSvc = inject(EmailService);
 
   readonly mode = signal<'in' | 'up'>('in');
   name = ''; email = ''; password = '';
@@ -123,8 +125,12 @@ export class AccountComponent {
   toggle(): void { this.mode.update((m) => (m === 'in' ? 'up' : 'in')); this.auth.error.set(null); }
 
   async submit(): Promise<void> {
-    if (this.mode() === 'in') await this.auth.signIn(this.email, this.password);
-    else await this.auth.signUp(this.name, this.email, this.password);
+    if (this.mode() === 'in') {
+      await this.auth.signIn(this.email, this.password);
+    } else {
+      const ok = await this.auth.signUp(this.name, this.email, this.password);
+      if (ok) this.emailSvc.welcome(this.email.trim(), this.name.trim());
+    }
   }
 
   onSame(): void { if (this.sameAsBilling) this.delivery = { ...this.billing }; }

@@ -1,6 +1,7 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { getDb } from './firebase';
+import { EmailService } from './email.service';
 import { Address, CartItem, Order, OrderContact, OrderItem } from './models';
 
 const LAST_KEY = 'kf.lastorder.v1';
@@ -13,6 +14,7 @@ function makeReference(): string {
 
 @Injectable({ providedIn: 'root' })
 export class OrdersService {
+  private email = inject(EmailService);
   readonly lastOrder = signal<Order | null>(this.readLast());
   readonly placing = signal(false);
   readonly error = signal<string | null>(null);
@@ -37,6 +39,7 @@ export class OrdersService {
       const order: Order = { id: ref.id, reference, uid, customer: contact, delivery, items: orderItems, total, status: 'pending', createdAt: now, updatedAt: now };
       this.lastOrder.set(order);
       this.writeLast(order);
+      this.email.orderPlaced(order); // fire-and-forget confirmation + shop notification
       return order;
     } catch {
       this.error.set('Sorry, we could not place your order. Please try again.');
