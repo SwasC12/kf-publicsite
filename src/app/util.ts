@@ -9,7 +9,12 @@ export function placeholderFor(gender?: string): string {
   return g.startsWith('w') || g.includes('lad') || g.includes('her') ? 'placeholder-women.jpg' : 'placeholder-men.jpg';
 }
 
+/** True for a usable custom image (not blank, not Rumi's generic cover). */
+export function isCustomImage(url?: string): boolean {
+  return !!url && !url.includes('rumifragrances.co.za');
+}
+
 /** The image to show for a product: its own, else the branded gender placeholder. */
 export function productImage(p: { imageUrl?: string; gender?: string }): string {
-  return p.imageUrl || placeholderFor(p.gender);
+  return isCustomImage(p.imageUrl) ? p.imageUrl! : placeholderFor(p.gender);
 }
