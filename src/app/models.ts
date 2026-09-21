@@ -1,5 +1,4 @@
-// Shared shapes for the `products` and `orders` Firestore collections.
-// Keep these identical to the Oil Tracker admin app's copy.
+// Shared shapes for the Kauā Fragrances shop. Keep in sync with the Oil Tracker admin.
 
 export interface Product {
   id: string;
@@ -7,11 +6,43 @@ export interface Product {
   description?: string;
   size?: string; // e.g. "50ml"
   price: number; // ZAR
-  stockQty: number | null; // null = not tracked by quantity
-  inStock: boolean; // available to buy
-  active: boolean; // visible on the storefront
+  salePrice?: number | null; // if set and < price, shown as a sale
+  stockQty: number | null;
+  inStock: boolean;
+  active: boolean;
   imageUrl?: string;
+  gallery?: string[]; // extra image URLs
+  category?: string; // e.g. "Men", "Women", "Unisex", "Oud"
+  gender?: string; // Men | Women | Unisex
+  notesTop?: string;
+  notesHeart?: string;
+  notesBase?: string;
+  longDescription?: string;
+  featured?: boolean;
   createdAt: number;
+  updatedAt: number;
+}
+
+export interface Address {
+  line1: string;
+  line2?: string;
+  city: string;
+  province: string;
+  postalCode: string;
+  country: string;
+}
+
+export function emptyAddress(): Address {
+  return { line1: '', line2: '', city: '', province: '', postalCode: '', country: 'South Africa' };
+}
+
+export interface CustomerProfile {
+  uid: string;
+  name: string;
+  email: string;
+  phone: string;
+  billing: Address;
+  delivery: Address;
   updatedAt: number;
 }
 
@@ -23,7 +54,7 @@ export interface OrderItem {
   qty: number;
 }
 
-export interface OrderCustomer {
+export interface OrderContact {
   name: string;
   email: string;
   phone: string;
@@ -34,8 +65,10 @@ export type OrderStatus = 'pending' | 'paid' | 'fulfilled' | 'cancelled';
 
 export interface Order {
   id: string;
-  reference: string; // e.g. "KF-7K3Q9"
-  customer: OrderCustomer;
+  reference: string;
+  uid?: string | null; // set when placed by a signed-in customer
+  customer: OrderContact;
+  delivery: Address;
   items: OrderItem[];
   total: number;
   status: OrderStatus;
@@ -47,7 +80,40 @@ export interface CartItem {
   productId: string;
   name: string;
   size?: string;
-  price: number;
+  price: number; // effective price (sale if applicable)
   imageUrl?: string;
   qty: number;
+}
+
+// ---- CMS / editable site content ----
+export interface Banner {
+  id: string;
+  title: string;
+  subtitle?: string;
+  imageUrl?: string;
+  ctaText?: string;
+  ctaLink?: string;
+  active: boolean;
+}
+
+export interface SiteContent {
+  announcementText?: string;
+  announcementActive?: boolean;
+  heroTitle?: string;
+  heroSubtitle?: string;
+  heroImageUrl?: string;
+  heroCtaText?: string;
+  heroCtaLink?: string;
+  banners?: Banner[];
+  featuredTitle?: string;
+  updatedAt?: number;
+}
+
+/** The effective selling price (sale price if valid, else price). */
+export function effectivePrice(p: Product): number {
+  return p.salePrice != null && p.salePrice > 0 && p.salePrice < p.price ? p.salePrice : p.price;
+}
+
+export function isOnSale(p: Product): boolean {
+  return p.salePrice != null && p.salePrice > 0 && p.salePrice < p.price;
 }

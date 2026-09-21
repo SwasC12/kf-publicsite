@@ -1,5 +1,5 @@
 import { Injectable, computed, effect, signal } from '@angular/core';
-import { CartItem, Product } from './models';
+import { CartItem, Product, effectivePrice } from './models';
 
 const KEY = 'kf.cart.v1';
 
@@ -22,7 +22,7 @@ export class CartService {
       }
       return [
         ...list,
-        { productId: p.id, name: p.name, size: p.size, price: p.price, imageUrl: p.imageUrl, qty },
+        { productId: p.id, name: p.name, size: p.size, price: effectivePrice(p), imageUrl: p.imageUrl, qty },
       ];
     });
   }
