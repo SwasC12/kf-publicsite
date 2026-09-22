@@ -2,7 +2,7 @@ import { Component, computed, effect, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
 import { getDb } from './firebase';
 import { CartService } from './cart.service';
 import { OrdersService } from './orders.service';
@@ -10,6 +10,7 @@ import { AuthService } from './auth.service';
 import { CustomerService } from './customer.service';
 import { SettingsService } from './settings.service';
 import { Address, DeliveryMethod, Discount, emptyAddress } from './models';
+import { discountError, discountAmountFor } from './discount-util';
 import { formatPrice } from './util';
 
 @Component({
@@ -125,10 +126,7 @@ export class CheckoutComponent {
   readonly fee = computed(() => (this.method() === 'delivery' ? this.settings.deliveryFeeFor(this.cart.total()) : 0));
   readonly discountAmount = computed(() => {
     const d = this.applied();
-    if (!d) return 0;
-    const sub = this.cart.total();
-    const amt = d.type === 'percent' ? (sub * d.value) / 100 : d.value;
-    return Math.min(Math.round(amt * 100) / 100, sub);
+    return d ? discountAmountFor(d, this.cart.total()) : 0;
   });
   readonly grandTotal = computed(() => Math.max(0, this.cart.total() + this.fee() - this.discountAmount()));
 
@@ -140,12 +138,11 @@ export class CheckoutComponent {
     this.promoError.set(null);
     try {
       const snap = await getDoc(doc(getDb(), 'discounts', code));
-      if (snap.exists() && (snap.data() as Discount).active) {
-        this.applied.set({ code, ...(snap.data() as Omit<Discount, 'code'>) });
-      } else {
-        this.applied.set(null);
-        this.promoError.set('That code is not valid.');
-      }
+      if (!snap.exists()) { this.applied.set(null); this.promoError.set('That code is not valid.'); return; }
+      const d: Discount = { code, ...(snap.data() as Omit<Discount, 'code'>) };
+      const err = discountError(d, this.cart.total(), 'online');
+      if (err) { this.applied.set(null); this.promoError.set(err); return; }
+      this.applied.set(d);
     } catch {
       this.promoError.set('Could not check that code.');
     }
@@ -193,6 +190,10 @@ export class CheckoutComponent {
       this.discountAmount(),
     );
     if (order) {
+      const code = this.applied()?.code;
+      if (code && this.discountAmount() > 0) {
+        try { await updateDoc(doc(getDb(), 'discounts', code), { usedCount: increment(1) }); } catch { /* non-fatal */ }
+      }
       this.cart.clear();
       this.router.navigate(['/order-confirmed']);
     }

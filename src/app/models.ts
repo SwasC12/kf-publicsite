@@ -89,6 +89,11 @@ export interface Discount {
   type: 'percent' | 'fixed';
   value: number;
   active: boolean;
+  scope?: 'online' | 'pos' | 'both';
+  minSpend?: number;
+  maxUses?: number | null;
+  usedCount?: number;
+  expiresAt?: number | null;
 }
 
 export interface RestockRequest {
