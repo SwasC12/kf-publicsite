@@ -1,6 +1,9 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { RouterLink, ActivatedRoute } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
+import { addDoc, collection } from 'firebase/firestore';
+import { getDb } from './firebase';
 import { ProductsService } from './products.service';
 import { CartService } from './cart.service';
 import { SeoService } from './seo.service';
@@ -12,7 +15,7 @@ import { formatPrice, placeholderFor, isCustomImage } from './util';
 @Component({
   selector: 'app-product',
   standalone: true,
-  imports: [RouterLink, IconComponent],
+  imports: [RouterLink, IconComponent, FormsModule],
   template: `
     <a class="back-link" routerLink="/"><app-icon name="arrow-left" [size]="16" /> Back to shop</a>
 
@@ -66,6 +69,19 @@ import { formatPrice, placeholderFor, isCustomImage } from './util';
             </div>
           } @else {
             <div class="oos-note">Currently sold out</div>
+            @if (notified()) {
+              <p class="promo-ok">Thanks! We'll email you as soon as it's back in stock.</p>
+            } @else {
+              <div class="notify-box">
+                <p>Want it? Get an email the moment it's back in stock:</p>
+                <div class="promo-row">
+                  <input type="email" [(ngModel)]="notifyEmail" name="ne" placeholder="you@email.com" />
+                  <button class="btn primary" (click)="notifyMe(p)" [disabled]="notifying() || !notifyEmail.trim()">
+                    {{ notifying() ? '…' : 'Notify me' }}
+                  </button>
+                </div>
+              </div>
+            }
             <button class="btn big save-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)">
               <app-icon name="heart" [size]="18" [filled]="fav.has(p.id)" /> {{ fav.has(p.id) ? 'Saved' : 'Save' }}
             </button>
@@ -111,11 +127,31 @@ export class ProductComponent {
 
   private seo = inject(SeoService);
 
+  notifyEmail = '';
+  readonly notifying = signal(false);
+  readonly notified = signal(false);
+
   constructor() {
     effect(() => {
       const p = this.product();
       if (p) this.seo.product(p);
     });
+  }
+
+  async notifyMe(p: Product): Promise<void> {
+    const email = this.notifyEmail.trim();
+    if (!email) return;
+    this.notifying.set(true);
+    try {
+      await addDoc(collection(getDb(), 'restockRequests'), {
+        productId: p.id, productName: p.name, email, createdAt: Date.now(), notified: false,
+      });
+      this.notified.set(true);
+    } catch {
+      /* ignore — keep form */
+    } finally {
+      this.notifying.set(false);
+    }
   }
 
   price = formatPrice;

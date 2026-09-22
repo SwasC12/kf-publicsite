@@ -572,3 +572,7 @@ button, a, .btn, .add-btn, .chip, .qbtn, .icon-btn, .fav-btn, .nav-icon { -webki
   .hide-sm { display: none; }
   .info-bar { display: none; }
 }
+
+/* ---------- Notify-me (out of stock) ---------- */
+.notify-box { background: var(--bg); border-radius: 10px; padding: 13px 14px; margin: 8px 0 14px; }
+.notify-box p { margin: 0 0 8px; font-size: 14px; color: var(--ink); }

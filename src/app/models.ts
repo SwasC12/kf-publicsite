@@ -91,6 +91,15 @@ export interface Discount {
   active: boolean;
 }
 
+export interface RestockRequest {
+  id: string;
+  productId: string;
+  productName: string;
+  email: string;
+  createdAt: number;
+  notified: boolean;
+}
+
 export interface StoreSettings {
   storeOpen?: boolean;
   storeClosedMessage?: string;

@@ -41,6 +41,13 @@ async function handleSend(request, env) {
       return json({ ok: true });
     }
 
+    if (body.type === 'restock') {
+      const product = clip(body.productName, 80) || 'A fragrance you wanted';
+      await sendEmail(env, { from: FROM_HELLO, to, replyTo: 'hello@kauafragrances.co.za',
+        subject: `Back in stock: ${product}`, html: restockHtml(product) });
+      return json({ ok: true });
+    }
+
     if (body.type === 'status') {
       const ref = clip(body.reference, 20) || 'KF-';
       const st = body.status === 'fulfilled' ? 'fulfilled' : 'paid';
@@ -102,6 +109,14 @@ function shell(inner) {
     <div style="border:1px solid #e5e1d9;border-radius:14px;padding:24px">${inner}</div>
     <p style="text-align:center;color:#9a9086;font-size:12px;margin-top:18px">Kauā Fragrances · ${SITE_URL}</p>
   </div>`;
+}
+
+function restockHtml(product) {
+  return shell(`
+    <h1 style="font-size:22px;margin:0 0 10px">It's back 🖤</h1>
+    <p style="line-height:1.6;color:#3b352f"><strong>${esc(product)}</strong> is back in stock at Kauā Fragrances.
+      These move fast — grab yours before it's gone.</p>
+    <p style="margin-top:18px"><a href="${SITE_URL}" style="background:#141210;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:700;display:inline-block">Shop now</a></p>`);
 }
 
 function statusHtml(name, reference, status, total) {
