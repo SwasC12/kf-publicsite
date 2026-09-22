@@ -10,7 +10,7 @@ import { AuthService } from './auth.service';
 import { CustomerService } from './customer.service';
 import { SettingsService } from './settings.service';
 import { Address, DeliveryMethod, Discount, emptyAddress } from './models';
-import { discountError, discountAmountFor } from './discount-util';
+import { discountError, computeDiscount, DiscountLine } from './discount-util';
 import { formatPrice } from './util';
 
 @Component({
@@ -124,9 +124,12 @@ export class CheckoutComponent {
 
   readonly threshold = computed(() => this.settings.settings().freeDeliveryThreshold ?? null);
   readonly fee = computed(() => (this.method() === 'delivery' ? this.settings.deliveryFeeFor(this.cart.total()) : 0));
+  private lines(): DiscountLine[] {
+    return this.cart.items().map((i) => ({ unitPrice: i.price, qty: i.qty }));
+  }
   readonly discountAmount = computed(() => {
     const d = this.applied();
-    return d ? discountAmountFor(d, this.cart.total()) : 0;
+    return d ? computeDiscount(d, this.lines()) : 0;
   });
   readonly grandTotal = computed(() => Math.max(0, this.cart.total() + this.fee() - this.discountAmount()));
 
@@ -140,7 +143,7 @@ export class CheckoutComponent {
       const snap = await getDoc(doc(getDb(), 'discounts', code));
       if (!snap.exists()) { this.applied.set(null); this.promoError.set('That code is not valid.'); return; }
       const d: Discount = { code, ...(snap.data() as Omit<Discount, 'code'>) };
-      const err = discountError(d, this.cart.total(), 'online');
+      const err = discountError(d, this.lines(), 'online');
       if (err) { this.applied.set(null); this.promoError.set(err); return; }
       this.applied.set(d);
     } catch {

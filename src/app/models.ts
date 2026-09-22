@@ -84,16 +84,26 @@ export interface Order {
   updatedAt: number;
 }
 
+export type DiscountMechanic = 'order' | 'item' | 'bundle';
+export type BundleReward = 'percent' | 'fixed' | 'price' | 'free';
+
 export interface Discount {
   code: string;
-  type: 'percent' | 'fixed';
-  value: number;
+  type: 'percent' | 'fixed'; // used by 'order' and 'item' mechanics
+  value: number;             // percent (0–100) or rand amount
   active: boolean;
   scope?: 'online' | 'pos' | 'both';
   minSpend?: number;
   maxUses?: number | null;
   usedCount?: number;
   expiresAt?: number | null;
+  // How the discount works. Defaults to 'order' for older codes.
+  mechanic?: DiscountMechanic;
+  // Multi-buy / bundle ("take N") settings.
+  bundleQty?: number;          // group size N
+  bundleReward?: BundleReward; // how each complete group is rewarded
+  bundleValue?: number;        // % off group / R off group / group price
+  bundleFree?: number;         // # cheapest items free per group (reward 'free')
 }
 
 export interface RestockRequest {
