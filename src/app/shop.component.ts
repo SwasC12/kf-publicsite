@@ -1,6 +1,6 @@
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
-import { RouterLink } from '@angular/router';
+import { RouterLink, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { ProductsService } from './products.service';
 import { CartService } from './cart.service';
@@ -24,7 +24,7 @@ import { formatPrice, productImage } from './util';
         <h1>{{ hero().heroTitle || 'KAUĀ FRAGRANCES' }}</h1>
         <p class="tagline">{{ hero().heroSubtitle || '"one spray to last the day"' }}</p>
         @if (hero().heroCtaText) {
-          <a class="btn primary big hero-cta" [href]="hero().heroCtaLink || '#shop'">{{ hero().heroCtaText }}</a>
+          <button class="btn primary big hero-cta" (click)="cta(hero().heroCtaLink)">{{ hero().heroCtaText }}</button>
         }
       </div>
     </section>
@@ -38,7 +38,7 @@ import { formatPrice, productImage } from './util';
             <div class="slide-body">
               <h2>{{ b.title }}</h2>
               @if (b.subtitle) { <p>{{ b.subtitle }}</p> }
-              @if (b.ctaText) { <a class="btn light" [href]="b.ctaLink || '#shop'">{{ b.ctaText }}</a> }
+              @if (b.ctaText) { <button class="btn light" (click)="cta(b.ctaLink)">{{ b.ctaText }}</button> }
             </div>
           </div>
         }
@@ -135,7 +135,15 @@ import { formatPrice, productImage } from './util';
               {{ price(eff(p)) }}
             </span>
             @if (p.inStock) {
-              <button class="add-btn" (click)="add(p)" title="Add to cart"><app-icon name="plus" [size]="16" /> Add</button>
+              @if (cart.qtyOf(p.id) > 0) {
+                <div class="qty-row small card-qty">
+                  <button class="qbtn" (click)="cart.setQty(p.id, cart.qtyOf(p.id) - 1)" aria-label="Less"><app-icon name="minus" [size]="14" /></button>
+                  <span class="qval">{{ cart.qtyOf(p.id) }}</span>
+                  <button class="qbtn" (click)="cart.setQty(p.id, cart.qtyOf(p.id) + 1)" aria-label="More"><app-icon name="plus" [size]="14" /></button>
+                </div>
+              } @else {
+                <button class="add-btn" (click)="add(p)" title="Add to cart"><app-icon name="plus" [size]="16" /> Add</button>
+              }
             } @else { <button class="add-btn disabled" disabled>Sold out</button> }
           </div>
         </div>
@@ -147,7 +155,8 @@ export class ShopComponent implements OnDestroy {
   readonly svc = inject(ProductsService);
   readonly content = inject(ContentService);
   readonly fav = inject(FavoritesService);
-  private cart = inject(CartService);
+  readonly cart = inject(CartService);
+  private router = inject(Router);
 
   readonly search = signal('');
   readonly category = signal<'all' | string>('all');
@@ -216,5 +225,14 @@ export class ShopComponent implements OnDestroy {
   next(): void { const n = this.banners().length; this.slide.update((i) => (i + 1) % n); }
 
   add(p: Product): void { this.cart.add(p); }
+
+  cta(link?: string): void {
+    const l = (link || '').trim();
+    if (!l || l.startsWith('#')) { this.scrollToShop(); return; }
+    if (l.startsWith('http')) { window.open(l, '_blank'); return; }
+    this.router.navigateByUrl(l);
+  }
+  scrollToShop(): void { document.getElementById('shop')?.scrollIntoView({ behavior: 'smooth' }); }
+
   imgErr(ev: Event): void { (ev.target as HTMLImageElement).style.visibility = 'hidden'; }
 }

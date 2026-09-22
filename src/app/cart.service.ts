@@ -10,6 +10,12 @@ export class CartService {
 
   readonly count = computed(() => this.items().reduce((n, i) => n + i.qty, 0));
   readonly total = computed(() => this.items().reduce((n, i) => n + i.price * i.qty, 0));
+  /** Signals the most recently added product (for the "added to cart" toast). */
+  readonly lastAdd = signal<{ name: string; at: number } | null>(null);
+
+  qtyOf(productId: string): number {
+    return this.items().find((i) => i.productId === productId)?.qty ?? 0;
+  }
 
   constructor() {
     effect(() => this.write(this.items()));
@@ -26,6 +32,7 @@ export class CartService {
         { productId: p.id, name: p.name, size: p.size, price: effectivePrice(p), imageUrl: productImage(p), qty },
       ];
     });
+    this.lastAdd.set({ name: p.name, at: Date.now() });
   }
 
   setQty(productId: string, qty: number): void {

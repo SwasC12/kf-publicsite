@@ -514,3 +514,41 @@ a { color: inherit; }
 .promo-row input { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; font-size: 15px; font-family: inherit; }
 .promo-row input:focus { outline: 2px solid #eaddcd; border-color: var(--accent); }
 .promo-ok { color: var(--ok); font-size: 13px; font-weight: 600; margin: 0 0 10px; }
+
+/* ========== Step 1: UX polish ========== */
+/* White background behind product images (fixes transparent-PNG checkerboard) */
+.thumb, .pd-image, .cart-thumb { background: #fff !important; }
+.thumb img, .pd-image img { object-fit: contain; }
+
+/* Added-to-cart toast */
+.cart-toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 45;
+  display: flex; align-items: center; gap: 8px; text-decoration: none;
+  background: var(--ink); color: #fff; padding: 11px 18px; border-radius: 999px;
+  font-size: 14px; font-weight: 600; box-shadow: 0 10px 28px rgba(0,0,0,0.3);
+  animation: toastUp 0.25s ease;
+}
+@keyframes toastUp { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* Card quantity stepper */
+.p-foot .qty-row.small { margin: 0; }
+.card-qty .qbtn { width: 30px; height: 30px; }
+
+/* Light button (on dark carousel) */
+.btn.light { background: #fff; color: var(--ink); border-color: #fff; }
+.btn.light:hover { background: #efece5; }
+.hero-cta { width: auto; }
+
+/* Tap / click feedback (esp. mobile) */
+button, a, .btn, .add-btn, .chip, .qbtn, .icon-btn, .fav-btn, .nav-icon { -webkit-tap-highlight-color: transparent; }
+.btn:active, .add-btn:active, .chip:active, .qbtn:active, .icon-btn:active,
+.fav-btn:active, .nav-icon:active, .car-nav:active, .method:active, .whatsapp-fab:active {
+  transform: scale(0.94);
+}
+.btn, .add-btn, .chip, .qbtn, .icon-btn, .fav-btn, .nav-icon, .method { transition: transform 0.09s ease, background 0.15s, color 0.15s, border-color 0.15s, filter 0.15s; }
+
+/* Checkout polish */
+.checkout-form, .order-summary { border: 1px solid var(--line); }
+.order-summary { position: sticky; top: 120px; }
+.checkout-form .block-title:first-child { margin-top: 0; }
+@media (max-width: 720px) { .order-summary { position: static; } }

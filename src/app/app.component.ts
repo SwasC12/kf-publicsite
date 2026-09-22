@@ -1,4 +1,4 @@
-import { Component, inject } from '@angular/core';
+import { Component, effect, inject, signal } from '@angular/core';
 import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { CartService } from './cart.service';
 import { ContentService } from './content.service';
@@ -62,6 +62,12 @@ import { IconComponent } from './icon.component';
       <p class="footer-sub">&copy; {{ year }} Kauā Fragrances · Payment by EFT · Inspired-by fragrance oils</p>
     </footer>
 
+    @if (toast(); as t) {
+      <a class="cart-toast" routerLink="/cart">
+        <app-icon name="check-circle" [size]="18" /> <span>{{ t }} added to cart</span>
+      </a>
+    }
+
     @if (whatsapp()) {
       <a class="whatsapp-fab" [href]="'https://wa.me/' + whatsapp()" target="_blank" rel="noopener" aria-label="Chat on WhatsApp">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -78,6 +84,19 @@ export class AppComponent {
   readonly auth = inject(AuthService);
   readonly fav = inject(FavoritesService);
   readonly year = new Date().getFullYear();
+  readonly toast = signal<string | null>(null);
+  private toastTimer: any;
+
+  constructor() {
+    effect(() => {
+      const a = this.cart.lastAdd();
+      if (a) {
+        this.toast.set(a.name);
+        clearTimeout(this.toastTimer);
+        this.toastTimer = setTimeout(() => this.toast.set(null), 2600);
+      }
+    });
+  }
 
   whatsapp(): string { return this.settings.settings().whatsappNumber || ''; }
 }
