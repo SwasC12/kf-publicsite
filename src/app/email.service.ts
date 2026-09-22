@@ -1,5 +1,6 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { Order } from './models';
+import { SettingsService } from './settings.service';
 
 /**
  * Fires transactional emails via the Worker endpoint (/api/send-email).
@@ -7,6 +8,8 @@ import { Order } from './models';
  */
 @Injectable({ providedIn: 'root' })
 export class EmailService {
+  private settings = inject(SettingsService);
+
   private post(payload: unknown): void {
     try {
       fetch('/api/send-email', {
@@ -30,6 +33,7 @@ export class EmailService {
       to: order.customer.email,
       name: order.customer.name,
       phone: order.customer.phone,
+      banking: this.settings.bankingDetails(),
       order: {
         reference: order.reference,
         total: order.total,
