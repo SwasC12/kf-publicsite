@@ -1,4 +1,4 @@
-import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
+import { Component, OnDestroy, computed, effect, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { RouterLink, Router, ActivatedRoute } from '@angular/router';
 import { FormsModule } from '@angular/forms';
@@ -108,8 +108,14 @@ import { formatPrice, productImage } from './util';
         </div>
       } @else {
         <div class="grid">
-          @for (p of filtered(); track p.id) { <ng-container *ngTemplateOutlet="card; context: { $implicit: p }" /> }
+          @for (p of visible(); track p.id) { <ng-container *ngTemplateOutlet="card; context: { $implicit: p }" /> }
         </div>
+        @if (filtered().length > visible().length) {
+          <div class="load-more-row">
+            <p class="load-count">Showing {{ visible().length }} of {{ filtered().length }}</p>
+            <button class="btn light big" (click)="showMore()">Load more</button>
+          </div>
+        }
       }
     </section>
 
@@ -205,6 +211,12 @@ export class ShopComponent implements OnDestroy {
     return sorted;
   });
 
+  // ---- Pagination: show a page at a time, not the whole catalogue ----
+  private readonly pageSize = 12;
+  readonly visibleCount = signal(this.pageSize);
+  readonly visible = computed<Product[]>(() => this.filtered().slice(0, this.visibleCount()));
+  showMore(): void { this.visibleCount.update((n) => n + this.pageSize); }
+
   price = formatPrice;
   eff = effectivePrice;
   onSale = isOnSale;
@@ -214,6 +226,11 @@ export class ShopComponent implements OnDestroy {
 
   constructor() {
     this.seo.page('Kauā Fragrances');
+    // Reset to the first page whenever the filter/search/sort changes.
+    effect(() => {
+      this.search(); this.category(); this.gender(); this.sort();
+      this.visibleCount.set(this.pageSize);
+    });
     this.route.queryParamMap.subscribe((q) => {
       const g = q.get('gender');
       this.gender.set(g ? g : 'all');
@@ -240,5 +257,10 @@ export class ShopComponent implements OnDestroy {
   }
   scrollToShop(): void { document.getElementById('shop')?.scrollIntoView({ behavior: 'smooth' }); }
 
-  imgErr(ev: Event): void { (ev.target as HTMLImageElement).style.visibility = 'hidden'; }
+  imgErr(ev: Event): void {
+    const el = ev.target as HTMLImageElement;
+    if (el.dataset['fallback']) { el.style.visibility = 'hidden'; return; }
+    el.dataset['fallback'] = '1';
+    el.src = 'placeholder-men.jpg';
+  }
 }
