@@ -1,6 +1,6 @@
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
-import { RouterLink, Router } from '@angular/router';
+import { RouterLink, Router, ActivatedRoute } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { ProductsService } from './products.service';
 import { CartService } from './cart.service';
@@ -157,6 +157,7 @@ export class ShopComponent implements OnDestroy {
   readonly fav = inject(FavoritesService);
   readonly cart = inject(CartService);
   private router = inject(Router);
+  private route = inject(ActivatedRoute);
 
   readonly search = signal('');
   readonly category = signal<'all' | string>('all');
@@ -188,7 +189,7 @@ export class ShopComponent implements OnDestroy {
     const gen = this.gender();
     const list = this.svc.products()
       .filter((p) => (cat === 'all' ? true : p.category === cat))
-      .filter((p) => (gen === 'all' ? true : p.gender === gen))
+      .filter((p) => (gen === 'all' ? true : p.gender === gen || p.gender === 'Unisex'))
       .filter((p) => (q
         ? p.name.toLowerCase().includes(q) || (p.inspiredBy ?? '').toLowerCase().includes(q)
         : true));
@@ -213,6 +214,11 @@ export class ShopComponent implements OnDestroy {
 
   constructor() {
     this.seo.page('Kauā Fragrances');
+    this.route.queryParamMap.subscribe((q) => {
+      const g = q.get('gender');
+      this.gender.set(g ? g : 'all');
+      if (g) setTimeout(() => this.scrollToShop(), 60);
+    });
     this.timer = setInterval(() => {
       const n = this.banners().length;
       if (n > 1) this.slide.update((i) => (i + 1) % n);

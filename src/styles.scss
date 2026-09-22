@@ -552,3 +552,23 @@ button, a, .btn, .add-btn, .chip, .qbtn, .icon-btn, .fav-btn, .nav-icon { -webki
 .order-summary { position: sticky; top: 120px; }
 .checkout-form .block-title:first-child { margin-top: 0; }
 @media (max-width: 720px) { .order-summary { position: static; } }
+
+/* ========== Step 2: hamburger + gender menu ========== */
+.hamburger-btn { display: none; background: none; border: 0; cursor: pointer; color: var(--ink); padding: 4px; margin-right: 2px; }
+.drawer-scrim { position: fixed; inset: 0; background: rgba(20,14,8,0.45); z-index: 60; animation: scrimIn 0.2s ease; }
+@keyframes scrimIn { from { opacity: 0; } to { opacity: 1; } }
+.drawer {
+  position: fixed; top: 0; left: 0; height: 100vh; width: 272px; max-width: 82vw; z-index: 61;
+  background: var(--surface); padding: 16px 14px; display: flex; flex-direction: column; gap: 2px;
+  box-shadow: 0 0 50px rgba(20,14,8,0.32); overflow-y: auto; animation: drawerIn 0.22s ease;
+}
+@keyframes drawerIn { from { transform: translateX(-100%); } to { transform: none; } }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding: 0 4px; }
+.drawer a { text-decoration: none; color: var(--ink); font-weight: 600; padding: 11px 10px; border-radius: 8px; font-size: 15px; }
+.drawer a:hover { background: var(--bg); }
+.drawer hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0; }
+@media (max-width: 700px) {
+  .hamburger-btn { display: grid; place-items: center; }
+  .hide-sm { display: none; }
+  .info-bar { display: none; }
+}

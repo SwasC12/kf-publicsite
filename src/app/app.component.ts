@@ -16,12 +16,15 @@ import { IconComponent } from './icon.component';
     }
 
     <header class="site-header">
+      <button class="hamburger-btn" (click)="menuOpen.set(true)" aria-label="Menu"><app-icon name="menu" [size]="22" /></button>
       <a class="brand" routerLink="/">
         <img class="brand-mark" src="logo-mark.png" alt="Kauā Fragrances" />
         <span class="brand-name">Kauā</span>
       </a>
       <nav class="site-nav">
-        <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }" class="nav-text">Shop</a>
+        <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }" class="nav-text hide-sm">Shop</a>
+        <a [routerLink]="['/']" [queryParams]="{ gender: 'Men' }" class="nav-text hide-sm">Men</a>
+        <a [routerLink]="['/']" [queryParams]="{ gender: 'Women' }" class="nav-text hide-sm">Women</a>
         <a class="nav-icon cart-link" routerLink="/saved" routerLinkActive="active" aria-label="Saved" title="Saved">
           <app-icon name="heart" [size]="20" />
           @if (fav.count() > 0) { <span class="cart-badge">{{ fav.count() }}</span> }
@@ -38,12 +41,36 @@ import { IconComponent } from './icon.component';
 
     <nav class="info-bar">
       <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Shop</a>
+      <a [routerLink]="['/']" [queryParams]="{ gender: 'Men' }">Men</a>
+      <a [routerLink]="['/']" [queryParams]="{ gender: 'Women' }">Women</a>
       <a routerLink="/about" routerLinkActive="active">About</a>
       <a routerLink="/shipping" routerLinkActive="active">Shipping &amp; Returns</a>
       <a routerLink="/faq" routerLinkActive="active">FAQ</a>
       <a routerLink="/track" routerLinkActive="active">Track order</a>
       <a routerLink="/contact" routerLinkActive="active">Contact</a>
     </nav>
+
+    @if (menuOpen()) {
+      <div class="drawer-scrim" (click)="menuOpen.set(false)"></div>
+      <aside class="drawer">
+        <div class="drawer-head">
+          <span class="brand-name">Kauā</span>
+          <button class="icon-btn" (click)="menuOpen.set(false)" aria-label="Close"><app-icon name="x" [size]="20" /></button>
+        </div>
+        <a routerLink="/" (click)="menuOpen.set(false)">Shop all</a>
+        <a [routerLink]="['/']" [queryParams]="{ gender: 'Men' }" (click)="menuOpen.set(false)">Men</a>
+        <a [routerLink]="['/']" [queryParams]="{ gender: 'Women' }" (click)="menuOpen.set(false)">Women</a>
+        <a routerLink="/saved" (click)="menuOpen.set(false)">Saved</a>
+        <a routerLink="/account" (click)="menuOpen.set(false)">My account</a>
+        <a routerLink="/cart" (click)="menuOpen.set(false)">Cart ({{ cart.count() }})</a>
+        <hr />
+        <a routerLink="/about" (click)="menuOpen.set(false)">About</a>
+        <a routerLink="/shipping" (click)="menuOpen.set(false)">Shipping &amp; Returns</a>
+        <a routerLink="/faq" (click)="menuOpen.set(false)">FAQ</a>
+        <a routerLink="/track" (click)="menuOpen.set(false)">Track order</a>
+        <a routerLink="/contact" (click)="menuOpen.set(false)">Contact</a>
+      </aside>
+    }
 
     <main class="site-main"><router-outlet /></main>
 
@@ -85,6 +112,7 @@ export class AppComponent {
   readonly fav = inject(FavoritesService);
   readonly year = new Date().getFullYear();
   readonly toast = signal<string | null>(null);
+  readonly menuOpen = signal(false);
   private toastTimer: any;
 
   constructor() {
