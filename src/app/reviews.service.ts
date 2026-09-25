@@ -1,6 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 import {
-  collection, addDoc, doc, updateDoc, onSnapshot, query, where, increment, Unsubscribe,
+  collection, addDoc, onSnapshot, query, where, Unsubscribe,
 } from 'firebase/firestore';
 import { getDb } from './firebase';
 import { Review } from './models';
@@ -19,10 +19,13 @@ export class ReviewsService {
     this.current = productId;
     this.loading.set(true);
     try {
+      // Query by product only (no composite index needed), then show approved ones.
       this.unsub = onSnapshot(
         query(collection(getDb(), 'reviews'), where('productId', '==', productId)),
         (snap) => {
-          const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Review, 'id'>) }));
+          const list = snap.docs
+            .map((d) => ({ id: d.id, ...(d.data() as Omit<Review, 'id'>) }))
+            .filter((r) => r.approved);
           list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
           this.reviews.set(list);
           this.loading.set(false);
@@ -39,17 +42,12 @@ export class ReviewsService {
     this.reviews.set([]);
   }
 
+  /** Submit a review for moderation. It stays hidden until an admin approves it. */
   async add(productId: string, name: string, rating: number, text: string): Promise<void> {
     const r = Math.max(1, Math.min(5, Math.round(rating)));
     await addDoc(collection(getDb(), 'reviews'), {
       productId, name: name.trim().slice(0, 60) || 'Anonymous',
-      rating: r, text: text.trim().slice(0, 600), createdAt: Date.now(),
+      rating: r, text: text.trim().slice(0, 600), approved: false, createdAt: Date.now(),
     });
-    // Update the cached aggregate on the product (rules allow this exact change).
-    try {
-      await updateDoc(doc(getDb(), 'products', productId), {
-        ratingSum: increment(r), ratingCount: increment(1),
-      });
-    } catch { /* aggregate is best-effort */ }
   }
 }

@@ -134,7 +134,7 @@ import { formatPrice, placeholderFor, isCustomImage, productImage } from './util
             }
 
             @if (reviewSent()) {
-              <p class="promo-ok">Thanks for your review!</p>
+              <p class="promo-ok">Thanks! Your review will appear once we've approved it.</p>
             } @else {
               <div class="review-form">
                 <div class="star-pick">

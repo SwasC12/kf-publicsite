@@ -33,6 +33,7 @@ export interface Review {
   name: string;
   rating: number; // 1–5
   text?: string;
+  approved?: boolean; // shown publicly only once an admin approves
   createdAt: number;
 }
 
