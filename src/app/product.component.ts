@@ -8,9 +8,10 @@ import { ProductsService } from './products.service';
 import { CartService } from './cart.service';
 import { SeoService } from './seo.service';
 import { FavoritesService } from './favorites.service';
+import { ReviewsService } from './reviews.service';
 import { IconComponent } from './icon.component';
 import { Product, effectivePrice, isOnSale } from './models';
-import { formatPrice, placeholderFor, isCustomImage } from './util';
+import { formatPrice, placeholderFor, isCustomImage, productImage } from './util';
 
 @Component({
   selector: 'app-product',
@@ -48,10 +49,24 @@ import { formatPrice, placeholderFor, isCustomImage } from './util';
           <h1>{{ p.name }}</h1>
           @if (p.inspiredBy) { <p class="pd-inspired">Smells like <strong>{{ p.inspiredBy }}</strong></p> }
           @if (p.size) { <span class="p-size">{{ p.size }}</span> }
+
+          @if ((p.ratingCount || 0) > 0) {
+            <div class="rating-row">
+              <span class="stars">
+                @for (s of [1,2,3,4,5]; track s) { <app-icon name="star" [size]="16" [filled]="s <= avgRounded(p)" /> }
+              </span>
+              <span class="rating-meta">{{ avg(p).toFixed(1) }} ({{ p.ratingCount }})</span>
+            </div>
+          }
+
           <div class="pd-price">
             @if (onSale(p)) { <span class="was">{{ price(p.price) }}</span> }
             {{ price(eff(p)) }}
           </div>
+
+          @if (p.inStock && p.stockQty != null && p.stockQty > 0 && p.stockQty <= 5) {
+            <p class="stock-low"><app-icon name="droplet" [size]="14" /> Only {{ p.stockQty }} left</p>
+          }
 
           @if (p.description) { <p class="pd-desc">{{ p.description }}</p> }
 
@@ -102,8 +117,64 @@ import { formatPrice, placeholderFor, isCustomImage } from './util';
               <p class="pd-long">{{ p.longDescription }}</p>
             </div>
           }
+
+          <!-- Reviews -->
+          <div class="notes-block reviews">
+            <h3 class="block-title">Reviews @if ((p.ratingCount || 0) > 0) { <span class="dim">({{ p.ratingCount }})</span> }</h3>
+            @for (r of reviewsSvc.reviews(); track r.id) {
+              <div class="review">
+                <div class="review-head">
+                  <span class="stars">@for (s of [1,2,3,4,5]; track s) { <app-icon name="star" [size]="13" [filled]="s <= r.rating" /> }</span>
+                  <strong>{{ r.name }}</strong>
+                </div>
+                @if (r.text) { <p class="review-text">{{ r.text }}</p> }
+              </div>
+            } @empty {
+              <p class="dim">No reviews yet — be the first.</p>
+            }
+
+            @if (reviewSent()) {
+              <p class="promo-ok">Thanks for your review!</p>
+            } @else {
+              <div class="review-form">
+                <div class="star-pick">
+                  @for (s of [1,2,3,4,5]; track s) {
+                    <button type="button" class="star-btn" (click)="revRating.set(s)" [attr.aria-label]="s + ' stars'">
+                      <app-icon name="star" [size]="24" [filled]="s <= revRating()" />
+                    </button>
+                  }
+                </div>
+                <input type="text" [(ngModel)]="revName" name="rn" placeholder="Your name" maxlength="60" />
+                <textarea [(ngModel)]="revText" name="rt" rows="3" placeholder="Share what you think…" maxlength="600"></textarea>
+                <button class="btn primary" (click)="submitReview(p)" [disabled]="reviewSending()">
+                  {{ reviewSending() ? 'Sending…' : 'Post review' }}
+                </button>
+              </div>
+            }
+          </div>
         </div>
       </div>
+
+      @if (related().length) {
+        <section class="related">
+          <h2 class="section-title">You may also like</h2>
+          <div class="grid">
+            @for (r of related(); track r.id) {
+              <article class="card">
+                <a class="thumb" [routerLink]="['/product', r.id]">
+                  <img [src]="img(r)" [alt]="r.name" loading="lazy" (error)="imgErr($event)" />
+                  @if (!r.inStock) { <span class="oos-badge">Sold out</span> }
+                </a>
+                <div class="card-body">
+                  <a class="p-name" [routerLink]="['/product', r.id]">{{ r.name }}</a>
+                  @if (r.inspiredBy) { <span class="p-inspired">Smells like {{ r.inspiredBy }}</span> }
+                  <div class="p-foot"><span class="p-price">{{ price(eff(r)) }}</span></div>
+                </div>
+              </article>
+            }
+          </div>
+        </section>
+      }
     } @else if (svc.loading()) {
       <div class="notice">Loading…</div>
     } @else {
@@ -126,17 +197,52 @@ export class ProductComponent {
   });
 
   private seo = inject(SeoService);
+  readonly reviewsSvc = inject(ReviewsService);
 
   notifyEmail = '';
   readonly notifying = signal(false);
   readonly notified = signal(false);
 
+  // Review form
+  revName = '';
+  revText = '';
+  readonly revRating = signal(5);
+  readonly reviewSending = signal(false);
+  readonly reviewSent = signal(false);
+
+  readonly related = computed<Product[]>(() => {
+    const p = this.product();
+    if (!p) return [];
+    const all = this.svc.products().filter((x) => x.id !== p.id && x.active !== false);
+    const sameGender = all.filter((x) => x.gender === p.gender || x.gender === 'Unisex' || p.gender === 'Unisex');
+    const pool = sameGender.length >= 4 ? sameGender : all;
+    return pool.slice(0, 4);
+  });
+
   constructor() {
     effect(() => {
       const p = this.product();
-      if (p) this.seo.product(p);
+      if (p) { this.seo.product(p); this.reviewsSvc.watch(p.id); }
     });
   }
+
+  avg(p: Product): number {
+    return (p.ratingCount || 0) > 0 ? (p.ratingSum || 0) / (p.ratingCount || 1) : 0;
+  }
+  avgRounded(p: Product): number { return Math.round(this.avg(p)); }
+
+  async submitReview(p: Product): Promise<void> {
+    if (this.reviewSending()) return;
+    this.reviewSending.set(true);
+    try {
+      await this.reviewsSvc.add(p.id, this.revName, this.revRating(), this.revText);
+      this.reviewSent.set(true);
+      this.revName = ''; this.revText = ''; this.revRating.set(5);
+    } catch { /* keep form */ }
+    finally { this.reviewSending.set(false); }
+  }
+
+  img = productImage;
 
   async notifyMe(p: Product): Promise<void> {
     const email = this.notifyEmail.trim();

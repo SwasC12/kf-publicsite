@@ -69,6 +69,10 @@ import { IconComponent } from './icon.component';
         <a routerLink="/faq" (click)="menuOpen.set(false)">FAQ</a>
         <a routerLink="/track" (click)="menuOpen.set(false)">Track order</a>
         <a routerLink="/contact" (click)="menuOpen.set(false)">Contact</a>
+        @if (canInstall()) {
+          <hr />
+          <button class="drawer-install" (click)="installApp()"><app-icon name="plus" [size]="16" /> Install app</button>
+        }
       </aside>
     }
 
@@ -113,6 +117,8 @@ export class AppComponent {
   readonly year = new Date().getFullYear();
   readonly toast = signal<string | null>(null);
   readonly menuOpen = signal(false);
+  readonly canInstall = signal(false);
+  private installEvent: any = null;
   private toastTimer: any;
 
   constructor() {
@@ -124,6 +130,21 @@ export class AppComponent {
         this.toastTimer = setTimeout(() => this.toast.set(null), 2600);
       }
     });
+    window.addEventListener('beforeinstallprompt', (e: Event) => {
+      e.preventDefault();
+      this.installEvent = e;
+      this.canInstall.set(true);
+    });
+    window.addEventListener('appinstalled', () => { this.canInstall.set(false); this.installEvent = null; });
+  }
+
+  async installApp(): Promise<void> {
+    this.menuOpen.set(false);
+    if (!this.installEvent) return;
+    this.installEvent.prompt();
+    try { await this.installEvent.userChoice; } catch { /* ignore */ }
+    this.installEvent = null;
+    this.canInstall.set(false);
   }
 
   whatsapp(): string { return this.settings.settings().whatsappNumber || ''; }

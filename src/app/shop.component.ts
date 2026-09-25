@@ -133,8 +133,17 @@ import { formatPrice, productImage } from './util';
         </a>
         <div class="card-body">
           <a class="p-name" [routerLink]="['/product', p.id]">{{ p.name }}</a>
+          @if ((p.ratingCount || 0) > 0) {
+            <span class="stars card-stars">
+              @for (s of [1,2,3,4,5]; track s) { <app-icon name="star" [size]="12" [filled]="s <= avgRounded(p)" /> }
+              <span class="rating-meta">({{ p.ratingCount }})</span>
+            </span>
+          }
           @if (p.inspiredBy) { <span class="p-inspired">Smells like {{ p.inspiredBy }}</span> }
           @if (p.size) { <span class="p-size">{{ p.size }}</span> }
+          @if (p.inStock && p.stockQty != null && p.stockQty > 0 && p.stockQty <= 5) {
+            <span class="stock-low">Only {{ p.stockQty }} left</span>
+          }
           <div class="p-foot">
             <span class="p-price">
               @if (onSale(p)) { <span class="was">{{ price(p.price) }}</span> }
@@ -221,6 +230,9 @@ export class ShopComponent implements OnDestroy {
   eff = effectivePrice;
   onSale = isOnSale;
   img = productImage;
+  avgRounded(p: Product): number {
+    return (p.ratingCount || 0) > 0 ? Math.round((p.ratingSum || 0) / (p.ratingCount || 1)) : 0;
+  }
 
   private seo = inject(SeoService);
 

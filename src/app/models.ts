@@ -20,8 +20,20 @@ export interface Product {
   notesBase?: string;
   longDescription?: string;
   featured?: boolean;
+  cost?: number; // unit cost (for profit/margin in admin)
+  ratingSum?: number; // sum of all review stars (for cached average)
+  ratingCount?: number; // number of reviews
   createdAt: number;
   updatedAt: number;
+}
+
+export interface Review {
+  id: string;
+  productId: string;
+  name: string;
+  rating: number; // 1–5
+  text?: string;
+  createdAt: number;
 }
 
 export interface Address {

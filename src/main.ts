@@ -10,3 +10,10 @@ window.scrollTo(0, 0);
 
 bootstrapApplication(AppComponent, appConfig)
   .catch((err) => console.error(err));
+
+// Register the service worker (install + offline). Production only.
+if ('serviceWorker' in navigator && location.hostname !== 'localhost') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
