@@ -20,7 +20,7 @@ export interface Product {
   notesBase?: string;
   longDescription?: string;
   featured?: boolean;
-  cost?: number; // unit cost (for profit/margin in admin)
+  cost?: number | null; // unit cost (for profit/margin in admin)
   ratingSum?: number; // sum of all review stars (for cached average)
   ratingCount?: number; // number of reviews
   createdAt: number;
