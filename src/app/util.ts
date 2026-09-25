@@ -3,10 +3,21 @@ export function formatPrice(v: number | null | undefined): string {
   return 'R' + Number(v).toFixed(2).replace(/\.00$/, '');
 }
 
+// Optional custom placeholders (data URLs) configured in the admin Image Manager.
+// When set they override the bundled default bottles. Updated by SettingsService.
+let customMen = '';
+let customWomen = '';
+export function setPlaceholderOverrides(men?: string, women?: string): void {
+  customMen = men || '';
+  customWomen = women || '';
+}
+
 /** Branded placeholder bottle by gender when a product has no image of its own. */
 export function placeholderFor(gender?: string): string {
   const g = (gender || '').toLowerCase();
-  return g.startsWith('w') || g.includes('lad') || g.includes('her') ? 'placeholder-women.jpg' : 'placeholder-men.jpg';
+  const isWomen = g.startsWith('w') || g.includes('lad') || g.includes('her');
+  if (isWomen) return customWomen || 'placeholder-women.jpg';
+  return customMen || 'placeholder-men.jpg';
 }
 
 /** True for a usable custom image (not blank, not Rumi's generic cover). */

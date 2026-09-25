@@ -3,6 +3,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { getDb } from './firebase';
 import { StoreSettings } from './models';
 import { banking } from './banking.config';
+import { setPlaceholderOverrides } from './util';
 
 const DEFAULTS: StoreSettings = {
   storeOpen: true,
@@ -35,7 +36,13 @@ export class SettingsService {
     try {
       onSnapshot(
         doc(getDb(), 'settings', 'store'),
-        (snap) => { if (snap.exists()) this.settings.set({ ...DEFAULTS, ...(snap.data() as StoreSettings) }); },
+        (snap) => {
+          if (snap.exists()) {
+            const s = { ...DEFAULTS, ...(snap.data() as StoreSettings) };
+            this.settings.set(s);
+            setPlaceholderOverrides(s.placeholderMen, s.placeholderWomen);
+          }
+        },
         () => {},
       );
     } catch {

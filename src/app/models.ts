@@ -131,6 +131,9 @@ export interface StoreSettings {
   bankAccountNumber?: string;
   bankBranchCode?: string;
   bankAccountType?: string;
+  // Custom placeholder images (data URLs) set from the admin Image Manager.
+  placeholderMen?: string;
+  placeholderWomen?: string;
   updatedAt?: number;
 }
 
