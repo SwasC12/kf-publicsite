@@ -1,4 +1,4 @@
-import { Component, effect, inject, signal } from '@angular/core';
+import { Component, ElementRef, effect, inject, signal, viewChild } from '@angular/core';
 import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { CartService } from './cart.service';
 import { ContentService } from './content.service';
@@ -10,13 +10,16 @@ import { IconComponent } from './icon.component';
 @Component({
   selector: 'app-root',
   imports: [RouterOutlet, RouterLink, RouterLinkActive, IconComponent],
+  host: { '(document:keydown.escape)': 'closeMenu()' },
   template: `
+    <a class="skip-link" href="#main">Skip to content</a>
+
     @if (content.content().announcementActive && content.content().announcementText) {
       <div class="announce">{{ content.content().announcementText }}</div>
     }
 
     <header class="site-header">
-      <button class="hamburger-btn" (click)="menuOpen.set(true)" aria-label="Menu"><app-icon name="menu" [size]="22" /></button>
+      <button #menuBtn class="hamburger-btn" (click)="openMenu()" aria-label="Open menu" aria-controls="mobile-menu" [attr.aria-expanded]="menuOpen()"><app-icon name="menu" [size]="22" /></button>
       <a class="brand" routerLink="/">
         <img class="brand-mark" src="logo-mark.png" alt="Kauā Fragrances" />
         <span class="brand-name">Kauā</span>
@@ -51,11 +54,11 @@ import { IconComponent } from './icon.component';
     </nav>
 
     @if (menuOpen()) {
-      <div class="drawer-scrim" (click)="menuOpen.set(false)"></div>
-      <aside class="drawer">
+      <div class="drawer-scrim" (click)="closeMenu()"></div>
+      <aside #drawer id="mobile-menu" class="drawer" role="dialog" aria-modal="true" aria-label="Menu" (keydown)="onDrawerKeydown($event)">
         <div class="drawer-head">
           <span class="brand-name">Kauā</span>
-          <button class="icon-btn" (click)="menuOpen.set(false)" aria-label="Close"><app-icon name="x" [size]="20" /></button>
+          <button #drawerClose class="icon-btn" (click)="closeMenu()" aria-label="Close menu"><app-icon name="x" [size]="20" /></button>
         </div>
         <a routerLink="/" (click)="menuOpen.set(false)">Shop all</a>
         <a [routerLink]="['/']" [queryParams]="{ gender: 'Men' }" (click)="menuOpen.set(false)">Men</a>
@@ -76,7 +79,7 @@ import { IconComponent } from './icon.component';
       </aside>
     }
 
-    <main class="site-main"><router-outlet /></main>
+    <main id="main" tabindex="-1" class="site-main"><router-outlet /></main>
 
     <footer class="site-footer">
       <img class="footer-mark" src="logo-mark.png" alt="" />
@@ -94,7 +97,7 @@ import { IconComponent } from './icon.component';
     </footer>
 
     @if (toast(); as t) {
-      <a class="cart-toast" routerLink="/cart">
+      <a class="cart-toast" routerLink="/cart" role="status" aria-live="polite">
         <app-icon name="check-circle" [size]="18" /> <span>{{ t }} added to cart</span>
       </a>
     }
@@ -117,6 +120,9 @@ export class AppComponent {
   readonly year = new Date().getFullYear();
   readonly toast = signal<string | null>(null);
   readonly menuOpen = signal(false);
+  readonly menuBtn = viewChild<ElementRef<HTMLButtonElement>>('menuBtn');
+  readonly drawer = viewChild<ElementRef<HTMLElement>>('drawer');
+  readonly drawerClose = viewChild<ElementRef<HTMLButtonElement>>('drawerClose');
   readonly canInstall = signal(false);
   private installEvent: any = null;
   private toastTimer: any;
@@ -136,6 +142,41 @@ export class AppComponent {
       this.canInstall.set(true);
     });
     window.addEventListener('appinstalled', () => { this.canInstall.set(false); this.installEvent = null; });
+    // Keep the page behind the mobile menu from scrolling.
+    effect(() => {
+      document.body.style.overflow = this.menuOpen() ? 'hidden' : '';
+    });
+  }
+
+  openMenu(): void {
+    this.menuOpen.set(true);
+    setTimeout(() => this.drawerClose()?.nativeElement.focus(), 0);
+  }
+
+  closeMenu(): void {
+    if (!this.menuOpen()) return;
+    this.menuOpen.set(false);
+    this.menuBtn()?.nativeElement.focus();
+  }
+
+  /** Keep keyboard focus inside the open drawer. */
+  onDrawerKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Tab') return;
+    const root = this.drawer()?.nativeElement;
+    if (!root) return;
+    const focusable = Array.from(
+      root.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input, select, textarea'),
+    ).filter((el) => el.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   async installApp(): Promise<void> {

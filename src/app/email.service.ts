@@ -1,45 +1,28 @@
-import { Injectable, inject } from '@angular/core';
-import { Order } from './models';
-import { SettingsService } from './settings.service';
+import { Injectable } from '@angular/core';
+import { getAuthInstance } from './firebase';
 
 /**
- * Fires transactional emails via the Worker endpoint (/api/send-email).
- * Fire-and-forget: never blocks or breaks the UX if email fails.
+ * Sends the welcome email through the Worker. The Worker verifies the caller's
+ * Firebase ID token and only mails the address on that account.
  */
 @Injectable({ providedIn: 'root' })
 export class EmailService {
-  private settings = inject(SettingsService);
-
-  private post(payload: unknown): void {
-    try {
-      fetch('/api/send-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }).catch(() => {});
-    } catch {
-      /* ignore */
-    }
-  }
-
-  welcome(to: string, name: string): void {
+  async welcome(to: string, name: string): Promise<void> {
     if (!to) return;
-    this.post({ type: 'welcome', to, name });
-  }
-
-  orderPlaced(order: Order): void {
-    this.post({
-      type: 'order',
-      to: order.customer.email,
-      name: order.customer.name,
-      phone: order.customer.phone,
-      banking: this.settings.bankingDetails(),
-      order: {
-        reference: order.reference,
-        total: order.total,
-        items: order.items,
-        delivery: order.delivery,
-      },
-    });
+    try {
+      const user = getAuthInstance().currentUser;
+      if (!user) return;
+      const token = await user.getIdToken();
+      await fetch('/api/send-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + token,
+        },
+        body: JSON.stringify({ type: 'welcome', to, name }),
+      });
+    } catch {
+      /* email is best-effort */
+    }
   }
 }

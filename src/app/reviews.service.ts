@@ -21,11 +21,13 @@ export class ReviewsService {
     try {
       // Query by product only (no composite index needed), then show approved ones.
       this.unsub = onSnapshot(
-        query(collection(getDb(), 'reviews'), where('productId', '==', productId)),
+        query(
+          collection(getDb(), 'reviews'),
+          where('productId', '==', productId),
+          where('approved', '==', true),
+        ),
         (snap) => {
-          const list = snap.docs
-            .map((d) => ({ id: d.id, ...(d.data() as Omit<Review, 'id'>) }))
-            .filter((r) => r.approved);
+          const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Review, 'id'>) }));
           list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
           this.reviews.set(list);
           this.loading.set(false);

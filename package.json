@@ -6,7 +6,8 @@
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "test": "ng test",
+    "test:worker": "node worker/place-order.test.mjs"
   },
   "private": true,
   "dependencies": {

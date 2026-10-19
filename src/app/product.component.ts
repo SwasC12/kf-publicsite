@@ -11,7 +11,7 @@ import { FavoritesService } from './favorites.service';
 import { ReviewsService } from './reviews.service';
 import { IconComponent } from './icon.component';
 import { Product, effectivePrice, isOnSale } from './models';
-import { formatPrice, placeholderFor, isCustomImage, productImage } from './util';
+import { formatPrice, optimizedImage, placeholderFor, isCustomImage, productImage } from './util';
 
 @Component({
   selector: 'app-product',
@@ -70,11 +70,11 @@ import { formatPrice, placeholderFor, isCustomImage, productImage } from './util
 
           @if (p.description) { <p class="pd-desc">{{ p.description }}</p> }
 
-          @if (p.inStock) {
+          @if (p.inStock && (p.stockQty == null || p.stockQty > 0)) {
             <div class="qty-row">
               <button class="qbtn" (click)="dec()" [disabled]="qty() <= 1"><app-icon name="minus" [size]="16" /></button>
               <span class="qval">{{ qty() }}</span>
-              <button class="qbtn" (click)="inc()"><app-icon name="plus" [size]="16" /></button>
+              <button class="qbtn" (click)="inc()" [disabled]="p.stockQty != null && qty() >= p.stockQty"><app-icon name="plus" [size]="16" /></button>
             </div>
             <div class="pd-actions">
               <button class="btn primary big" (click)="add(p)"><app-icon name="cart" [size]="18" /> Add to cart</button>
@@ -265,15 +265,23 @@ export class ProductComponent {
   onSale = isOnSale;
 
   images(p: Product): string[] {
-    const imgs = [p.imageUrl, ...(p.gallery ?? [])].filter((x): x is string => isCustomImage(x));
+    const imgs = [p.imageUrl, ...(p.gallery ?? [])]
+      .filter((x): x is string => isCustomImage(x))
+      .map((x) => optimizedImage(x, 1200));
     return imgs.length ? imgs : [placeholderFor(p.gender)];
   }
   mainImage(p: Product): string | undefined {
     return this.images(p)[this.activeImg()] ?? this.images(p)[0];
   }
 
-  inc(): void { this.qty.update((q) => q + 1); }
+  inc(): void {
+    const max = this.product()?.stockQty ?? 99;
+    this.qty.update((q) => Math.min(max, q + 1));
+  }
   dec(): void { this.qty.update((q) => Math.max(1, q - 1)); }
-  add(p: Product): void { this.cart.add(p, this.qty()); }
+  add(p: Product): void {
+    const max = p.stockQty ?? 99;
+    this.cart.add(p, Math.max(1, Math.min(max, this.qty())));
+  }
   imgErr(ev: Event): void { (ev.target as HTMLImageElement).style.visibility = 'hidden'; }
 }

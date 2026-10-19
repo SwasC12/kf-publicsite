@@ -85,3 +85,52 @@ you have an admin login. Full steps are in the Oil Tracker repo
    (Firestore Database → Rules).
 3. In the Oil Tracker app → **Admin** → sign in → **Products** → add fragrances.
    They appear here instantly.
+
+## Security setup (checkout, email, promo codes)
+
+Checkout is now server-authoritative: the browser sends only product IDs and
+quantities, and the Cloudflare Worker re-reads the catalogue, recomputes the
+subtotal, delivery fee, promo discount and total, checks/decrements stock, and
+writes the order with the Firebase Admin SDK. Order and status emails are sent
+by the Worker, not the browser.
+
+Set these Worker secrets before deploying:
+
+```bash
+# Firebase service account JSON (Project settings → Service accounts → generate key)
+npx wrangler secret put FIREBASE_SERVICE_ACCOUNT
+
+# The public Firebase web API key (used to verify signed-in customers)
+npx wrangler secret put FIREBASE_API_KEY
+
+# Random secret used by the admin app when it sends status emails
+npx wrangler secret put ADMIN_API_KEY
+
+# Resend key (already used by the order emails)
+npx wrangler secret put RESEND_API_KEY
+```
+
+Until `FIREBASE_SERVICE_ACCOUNT` is set, `/api/place-order` and
+`/api/validate-promo` return 503 and checkout stays closed rather than falling
+back to untrusted browser totals.
+
+Then merge `firestore.rules` and the two indexes in
+`firestore.indexes.json` into the canonical copies in the Oil Tracker repo,
+replace `PASTE_ADMIN_UID`, and deploy from **that** repo (so you never overwrite
+the admin rules with the placeholder copy):
+
+```bash
+# run in the Oil Tracker repo
+firebase deploy --only firestore:rules,firestore:indexes
+```
+
+The rules make `discounts` admin-only (promo codes are checked by the Worker),
+make `orders` read-only for their owner, and expose only approved reviews.
+If the admin app uses the client SDK, its user must be the UID in
+`PASTE_ADMIN_UID`; an Admin SDK/service account bypasses rules automatically.
+
+Run the Worker regression tests with:
+
+```bash
+npm run test:worker
+```

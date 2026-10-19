@@ -2,8 +2,6 @@ import { Component, computed, effect, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
-import { doc, getDoc, updateDoc, increment } from 'firebase/firestore';
-import { getDb } from './firebase';
 import { CartService } from './cart.service';
 import { OrdersService } from './orders.service';
 import { AuthService } from './auth.service';
@@ -11,7 +9,7 @@ import { CustomerService } from './customer.service';
 import { SettingsService } from './settings.service';
 import { Address, DeliveryMethod, Discount, emptyAddress } from './models';
 import { discountError, computeDiscount, DiscountLine } from './discount-util';
-import { formatPrice } from './util';
+import { formatPrice, isValidEmail } from './util';
 
 @Component({
   selector: 'app-checkout',
@@ -31,7 +29,8 @@ import { formatPrice } from './util';
         <form class="checkout-form" (ngSubmit)="place()">
           <h2 class="block-title">Contact</h2>
           <label>Full name*<input type="text" name="name" [(ngModel)]="name" required autocomplete="name" /></label>
-          <label>Email*<input type="email" name="email" [(ngModel)]="email" required autocomplete="email" /></label>
+          <label>Email*<input type="email" name="email" [(ngModel)]="email" required autocomplete="email" (blur)="emailTouched.set(true)" /></label>
+          @if (emailError()) { <p class="form-error">{{ emailError() }}</p> }
           <label>Phone / WhatsApp*<input type="tel" name="phone" [(ngModel)]="phone" required autocomplete="tel" /></label>
 
           <h2 class="block-title">Delivery</h2>
@@ -121,6 +120,10 @@ export class CheckoutComponent {
   promo = '';
   readonly applied = signal<Discount | null>(null);
   readonly promoError = signal<string | null>(null);
+  readonly emailTouched = signal(false);
+  readonly emailError = computed(() =>
+    this.emailTouched() && !isValidEmail(this.email) ? 'Please enter a valid email address.' : null,
+  );
 
   readonly threshold = computed(() => this.settings.settings().freeDeliveryThreshold ?? null);
   readonly fee = computed(() => (this.method() === 'delivery' ? this.settings.deliveryFeeFor(this.cart.total()) : 0));
@@ -140,9 +143,22 @@ export class CheckoutComponent {
     if (!code) return;
     this.promoError.set(null);
     try {
-      const snap = await getDoc(doc(getDb(), 'discounts', code));
-      if (!snap.exists()) { this.applied.set(null); this.promoError.set('That code is not valid.'); return; }
-      const d: Discount = { code, ...(snap.data() as Omit<Discount, 'code'>) };
+      // Validated on the server; codes are no longer readable from the browser.
+      const res = await fetch('/api/validate-promo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          items: this.cart.items().map((i) => ({ productId: i.productId, qty: i.qty })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.discount) {
+        this.applied.set(null);
+        this.promoError.set(data.error || 'Could not check that code.');
+        return;
+      }
+      const d: Discount = { ...(data.discount as Discount), code };
       const err = discountError(d, this.lines(), 'online');
       if (err) { this.applied.set(null); this.promoError.set(err); return; }
       this.applied.set(d);
@@ -175,12 +191,13 @@ export class CheckoutComponent {
   }
 
   valid(): boolean {
-    const base = !!this.name.trim() && !!this.email.trim() && !!this.phone.trim();
+    const base = !!this.name.trim() && isValidEmail(this.email) && !!this.phone.trim();
     if (this.method() === 'collection') return base;
     return base && !!this.delivery.line1.trim() && !!this.delivery.city.trim();
   }
 
   async place(): Promise<void> {
+    this.emailTouched.set(true);
     if (!this.valid()) return;
     const order = await this.orders.place(
       { name: this.name.trim(), email: this.email.trim(), phone: this.phone.trim(), note: this.note.trim() || undefined },
@@ -193,10 +210,6 @@ export class CheckoutComponent {
       this.discountAmount(),
     );
     if (order) {
-      const code = this.applied()?.code;
-      if (code && this.discountAmount() > 0) {
-        try { await updateDoc(doc(getDb(), 'discounts', code), { usedCount: increment(1) }); } catch { /* non-fatal */ }
-      }
       this.cart.clear();
       this.router.navigate(['/order-confirmed']);
     }

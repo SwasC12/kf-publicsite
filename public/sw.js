@@ -1,10 +1,10 @@
 // Kauā Fragrances service worker — enables install + basic offline.
 // Only same-origin GETs are handled; Firebase/Google/font requests pass through
 // untouched so realtime data and auth are never cached.
-const CACHE = 'kaua-v1';
+const CACHE = 'kaua-v2';
 const CORE = [
   '/', '/index.html', '/manifest.webmanifest',
-  '/logo-mark.png', '/logo-lockup.png',
+  '/logo-mark.png',
   '/icon-192.png', '/icon-512.png',
   '/placeholder-men.jpg', '/placeholder-women.jpg',
 ];

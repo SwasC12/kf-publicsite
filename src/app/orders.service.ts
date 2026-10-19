@@ -1,69 +1,64 @@
-import { Injectable, inject, signal } from '@angular/core';
-import { addDoc, collection, doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { getDb } from './firebase';
-import { EmailService } from './email.service';
-import { Address, CartItem, DeliveryMethod, Order, OrderContact, OrderItem } from './models';
+import { Injectable, signal } from '@angular/core';
+import { getAuthInstance } from './firebase';
+import { Address, CartItem, DeliveryMethod, Order, OrderContact } from './models';
 
 const LAST_KEY = 'kf.lastorder.v1';
 
-function makeReference(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const pick = Array.from({ length: 5 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-  return `KF-${pick}`;
-}
-
 @Injectable({ providedIn: 'root' })
 export class OrdersService {
-  private email = inject(EmailService);
   readonly lastOrder = signal<Order | null>(this.readLast());
   readonly placing = signal(false);
   readonly error = signal<string | null>(null);
 
+  /**
+   * Places an order on the server. The Worker re-reads every product, works out
+   * the real price, fees and discount, and only then writes the order. Nothing
+   * money-related is trusted from the browser.
+   */
   async place(
     contact: OrderContact,
     delivery: Address,
     items: CartItem[],
-    uid: string | null,
+    _uid: string | null,
     deliveryMethod: DeliveryMethod,
-    deliveryFee: number,
+    _deliveryFee: number,
     discountCode?: string,
-    discountAmount = 0,
+    _discountAmount = 0,
   ): Promise<Order | null> {
     if (!items.length) return null;
     this.placing.set(true);
     this.error.set(null);
 
-    const orderItems: OrderItem[] = items.map((i) => ({
-      productId: i.productId, name: i.name, size: i.size, price: i.price, qty: i.qty,
-    }));
-    const subtotal = orderItems.reduce((n, i) => n + i.price * i.qty, 0);
-    const fee = deliveryMethod === 'delivery' ? deliveryFee : 0;
-    const disc = Math.min(discountAmount, subtotal);
-    const total = Math.max(0, subtotal + fee - disc);
-    const reference = makeReference();
-    const now = Date.now();
-
     try {
-      const ref = await addDoc(collection(getDb(), 'orders'), {
-        reference, uid: uid ?? null, customer: contact, delivery, deliveryMethod, deliveryFee: fee,
-        subtotal, discountCode: disc > 0 ? discountCode : undefined, discountAmount: disc > 0 ? disc : undefined,
-        items: orderItems, total, status: 'pending', createdAt: now, updatedAt: now,
-        serverCreatedAt: serverTimestamp(),
+      const user = getAuthInstance().currentUser;
+      const token = user ? await user.getIdToken() : '';
+      const res = await fetch('/api/place-order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: 'Bearer ' + token } : {}),
+        },
+        body: JSON.stringify({
+          contact,
+          delivery,
+          deliveryMethod,
+          items: items.map((i) => ({ productId: i.productId, qty: i.qty })),
+          discountCode: discountCode || '',
+        }),
       });
-      // Public status doc so customers can track by reference without an account.
-      try {
-        await setDoc(doc(getDb(), 'orderStatus', reference), {
-          reference, status: 'pending', total, createdAt: now, updatedAt: now,
-        });
-      } catch { /* non-fatal */ }
 
-      const order: Order = { id: ref.id, reference, uid, customer: contact, delivery, deliveryMethod, deliveryFee: fee, subtotal, discountCode: disc > 0 ? discountCode : undefined, discountAmount: disc > 0 ? disc : undefined, items: orderItems, total, status: 'pending', createdAt: now, updatedAt: now };
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.order) {
+        this.error.set(data.error || 'Sorry, we could not place your order. Please try again.');
+        return null;
+      }
+
+      const order = data.order as Order;
       this.lastOrder.set(order);
       this.writeLast(order);
-      this.email.orderPlaced(order);
       return order;
     } catch {
-      this.error.set('Sorry, we could not place your order. Please try again.');
+      this.error.set('Could not reach the shop. Check your connection and try again.');
       return null;
     } finally {
       this.placing.set(false);

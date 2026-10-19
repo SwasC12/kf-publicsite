@@ -1,0 +1,86 @@
+rules_version = '2';
+
+// Kauā Fragrances — public site rules.
+//
+// IMPORTANT: the canonical copy lives in the Oil Tracker admin repo
+// (Perfume/firestore.rules). Merge this file into that one and publish from
+// there; both apps share the perfume-3b075 project.
+//
+// Replace PASTE_ADMIN_UID with the admin user's Firebase Auth UID (the same
+// value already used by the admin app).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null && request.auth.uid == 'PASTE_ADMIN_UID';
+    }
+
+    // Catalogue — shoppers only ever see active products.
+    match /products/{id} {
+      allow read: if resource.data.active == true || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Editable homepage content and store settings (contact + EFT details).
+    match /siteContent/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Promo codes are checked by the Worker, never read by the browser.
+    match /discounts/{code} {
+      allow read, write: if isAdmin();
+    }
+
+    // Orders are written by the Worker (Admin SDK bypasses these rules).
+    // Customers can read only their own order history.
+    match /orders/{id} {
+      allow read: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Public "track order" lookup by reference, one document at a time.
+    match /orderStatus/{reference} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if isAdmin();
+    }
+
+    match /customers/{uid} {
+      allow read, write: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+    }
+
+    // Reviews are moderated: the public sees approved ones only.
+    match /reviews/{id} {
+      allow read: if resource.data.approved == true || isAdmin();
+      allow create: if request.resource.data.approved == false
+        && request.resource.data.keys().hasOnly(['productId', 'name', 'rating', 'text', 'approved', 'createdAt'])
+        && request.resource.data.productId is string
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 60
+        && request.resource.data.text is string
+        && request.resource.data.text.size() <= 600
+        && request.resource.data.rating is int
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 5;
+      allow update, delete: if isAdmin();
+    }
+
+    // "Notify me when back in stock" — write-only for shoppers.
+    match /restockRequests/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['productId', 'productName', 'email', 'createdAt', 'notified'])
+        && request.resource.data.notified == false
+        && request.resource.data.productId is string
+        && request.resource.data.productName is string
+        && request.resource.data.productName.size() <= 120
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 200;
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}

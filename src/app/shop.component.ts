@@ -9,7 +9,7 @@ import { SeoService } from './seo.service';
 import { FavoritesService } from './favorites.service';
 import { IconComponent } from './icon.component';
 import { Product, effectivePrice, isOnSale } from './models';
-import { formatPrice, productImage } from './util';
+import { formatPrice, optimizedImage, productImage } from './util';
 
 @Component({
   selector: 'app-shop',
@@ -18,7 +18,7 @@ import { formatPrice, productImage } from './util';
   template: `
     <!-- Hero -->
     <section class="hero" [class.has-image]="!!hero().heroImageUrl"
-             [style.background-image]="hero().heroImageUrl ? 'url(' + hero().heroImageUrl + ')' : null">
+             [style.background-image]="hero().heroImageUrl ? 'url(' + bannerImg(hero().heroImageUrl) + ')' : null">
       <div class="hero-inner">
         <img class="hero-mark" src="logo-mark.png" alt="Kauā Fragrances" />
         <h1>{{ hero().heroTitle || 'KAUĀ FRAGRANCES' }}</h1>
@@ -31,23 +31,42 @@ import { formatPrice, productImage } from './util';
 
     <!-- Promo carousel -->
     @if (banners().length) {
-      <section class="carousel">
+      <section class="carousel" [class.single]="banners().length === 1" [class.image-only]="imageOnly()"
+               aria-roledescription="carousel" aria-label="Promotions"
+               (mouseenter)="hoverPaused.set(true)" (mouseleave)="hoverPaused.set(false)"
+               (focusin)="hoverPaused.set(true)" (focusout)="onCarouselFocusOut($event)">
         @for (b of banners(); track b.id; let i = $index) {
           <div class="slide" [class.active]="i === slide()"
-               [style.background-image]="b.imageUrl ? 'url(' + b.imageUrl + ')' : null">
-            <div class="slide-body">
-              <h2>{{ b.title }}</h2>
-              @if (b.subtitle) { <p>{{ b.subtitle }}</p> }
-              @if (b.ctaText) { <button class="btn light" (click)="cta(b.ctaLink)">{{ b.ctaText }}</button> }
-            </div>
+               [class.has-text]="!!(b.title || b.subtitle || b.ctaText)"
+               role="group" aria-roledescription="slide"
+               [attr.aria-label]="(i + 1) + ' of ' + banners().length"
+               [attr.aria-hidden]="i !== slide() ? 'true' : null"
+               [attr.inert]="i !== slide() ? '' : null">
+            @if (b.imageUrl) {
+              <img class="slide-img" [src]="bannerImg(b.imageUrl)" [alt]="b.title || 'Kauā Fragrances promotion'"
+                   [attr.loading]="i === 0 ? 'eager' : 'lazy'" (error)="bannerErr($event)" />
+            }
+            @if (b.title || b.subtitle || b.ctaText) {
+              <div class="slide-body">
+                @if (b.title) { <h2>{{ b.title }}</h2> }
+                @if (b.subtitle) { <p>{{ b.subtitle }}</p> }
+                @if (b.ctaText) { <button class="btn light" (click)="cta(b.ctaLink)">{{ b.ctaText }}</button> }
+              </div>
+            }
           </div>
         }
         @if (banners().length > 1) {
-          <button class="car-nav prev" (click)="prev()" aria-label="Previous"><app-icon name="chevron-left" [size]="22" /></button>
-          <button class="car-nav next" (click)="next()" aria-label="Next"><app-icon name="chevron-right" [size]="22" /></button>
+          <button class="car-nav prev" (click)="prev()" aria-label="Previous promotion"><app-icon name="chevron-left" [size]="22" /></button>
+          <button class="car-nav next" (click)="next()" aria-label="Next promotion"><app-icon name="chevron-right" [size]="22" /></button>
+          <button class="car-pause" type="button" (click)="togglePause()"
+                  [attr.aria-label]="userPaused() ? 'Play promotions' : 'Pause promotions'">
+            {{ userPaused() ? 'Play' : 'Pause' }}
+          </button>
           <div class="dots">
             @for (b of banners(); track b.id; let i = $index) {
-              <button class="dot" [class.on]="i === slide()" (click)="slide.set(i)" aria-label="Slide"></button>
+              <button class="dot" [class.on]="i === slide()" (click)="goTo(i)"
+                      [attr.aria-label]="'Go to promotion ' + (i + 1)"
+                      [attr.aria-current]="i === slide() ? 'true' : null"></button>
             }
           </div>
         }
@@ -104,7 +123,7 @@ import { formatPrice, productImage } from './util';
       } @else if (filtered().length === 0) {
         <div class="notice">
           <app-icon name="bag" [size]="40" />
-          <p>{{ search() || category() !== 'all' ? 'No fragrances match.' : 'No fragrances available right now — check back soon.' }}</p>
+          <p>{{ search() || category() !== 'all' || gender() !== 'all' ? 'No fragrances match those filters.' : 'No fragrances available right now — check back soon.' }}</p>
         </div>
       } @else {
         <div class="grid">
@@ -149,12 +168,12 @@ import { formatPrice, productImage } from './util';
               @if (onSale(p)) { <span class="was">{{ price(p.price) }}</span> }
               {{ price(eff(p)) }}
             </span>
-            @if (p.inStock) {
+            @if (p.inStock && (p.stockQty == null || p.stockQty > 0)) {
               @if (cart.qtyOf(p.id) > 0) {
                 <div class="qty-row small card-qty">
                   <button class="qbtn" (click)="cart.setQty(p.id, cart.qtyOf(p.id) - 1)" aria-label="Less"><app-icon name="minus" [size]="14" /></button>
                   <span class="qval">{{ cart.qtyOf(p.id) }}</span>
-                  <button class="qbtn" (click)="cart.setQty(p.id, cart.qtyOf(p.id) + 1)" aria-label="More"><app-icon name="plus" [size]="14" /></button>
+                  <button class="qbtn" (click)="incCard(p)" [disabled]="p.stockQty != null && cart.qtyOf(p.id) >= p.stockQty" aria-label="More"><app-icon name="plus" [size]="14" /></button>
                 </div>
               } @else {
                 <button class="add-btn" (click)="add(p)" title="Add to cart"><app-icon name="plus" [size]="16" /> Add</button>
@@ -179,10 +198,26 @@ export class ShopComponent implements OnDestroy {
   readonly gender = signal<'all' | string>('all');
   readonly sort = signal<'featured' | 'newest' | 'price-asc' | 'price-desc' | 'name'>('featured');
   readonly slide = signal(0);
+  readonly hoverPaused = signal(false);
+  private readonly reducedMotion =
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  readonly userPaused = signal(this.reducedMotion);
   private timer: any;
 
   readonly hero = computed(() => this.content.content());
-  readonly banners = computed(() => this.content.activeBanners());
+  readonly banners = computed(() => {
+    const seen = new Set<string>();
+    return this.content.activeBanners().filter((b) => {
+      const key = [b.imageUrl || '', b.title || '', b.subtitle || '', b.ctaText || '', b.ctaLink || ''].join('|');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  });
+  readonly imageOnly = computed(() =>
+    this.banners().length > 0 &&
+    this.banners().every((b) => !!b.imageUrl && !b.title && !b.subtitle && !b.ctaText),
+  );
 
   readonly categories = computed(() => {
     const set = new Set<string>();
@@ -249,6 +284,7 @@ export class ShopComponent implements OnDestroy {
       if (g) setTimeout(() => this.scrollToShop(), 60);
     });
     this.timer = setInterval(() => {
+      if (this.userPaused() || this.hoverPaused()) return;
       const n = this.banners().length;
       if (n > 1) this.slide.update((i) => (i + 1) % n);
     }, 5000);
@@ -259,7 +295,26 @@ export class ShopComponent implements OnDestroy {
   prev(): void { const n = this.banners().length; this.slide.update((i) => (i - 1 + n) % n); }
   next(): void { const n = this.banners().length; this.slide.update((i) => (i + 1) % n); }
 
+  goTo(i: number): void { this.slide.set(i); }
+
+  togglePause(): void { this.userPaused.update((v) => !v); }
+
+  // Only resume after focus leaves the whole carousel, not when moving between dots.
+  onCarouselFocusOut(event: FocusEvent): void {
+    const root = event.currentTarget as HTMLElement;
+    if (!root.contains(event.relatedTarget as Node | null)) this.hoverPaused.set(false);
+  }
+
+  bannerImg(url?: string): string { return optimizedImage(url, 1600); }
+
+  bannerErr(ev: Event): void { (ev.target as HTMLImageElement).style.display = 'none'; }
+
   add(p: Product): void { this.cart.add(p); }
+
+  incCard(p: Product): void {
+    const max = p.stockQty == null ? 99 : p.stockQty;
+    this.cart.setQty(p.id, Math.min(max, this.cart.qtyOf(p.id) + 1));
+  }
 
   cta(link?: string): void {
     const l = (link || '').trim();

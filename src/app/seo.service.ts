@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 import { Meta, Title } from '@angular/platform-browser';
 import { Product, effectivePrice } from './models';
+import { optimizedImage } from './util';
 
 const SITE = 'Kauā Fragrances';
 const BASE = 'https://kauafragrances.co.za';
@@ -29,7 +30,7 @@ export class SeoService {
 
   product(p: Product): void {
     const url = `${BASE}/product/${p.id}`;
-    const img = p.imageUrl || DEFAULT_IMG;
+    const img = p.imageUrl ? optimizedImage(p.imageUrl, 1200) : DEFAULT_IMG;
     const desc = p.description || `${p.name} — inspired-by fragrance oil from ${SITE}.`;
     this.page(p.name, desc, img, url);
     this.setProp('og:type', 'product');

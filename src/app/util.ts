@@ -3,6 +3,26 @@ export function formatPrice(v: number | null | undefined): string {
   return 'R' + Number(v).toFixed(2).replace(/\.00$/, '');
 }
 
+/** Basic e-mail validation — rejects obviously invalid addresses. */
+export function isValidEmail(v: string): boolean {
+  const s = v.trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
+/**
+ * Adds sensible delivery transforms to Cloudinary URLs (auto format, auto
+ * quality, capped width). Only touches URLs that still have a version segment,
+ * so already-transformed URLs are left alone.
+ */
+export function optimizedImage(url: string | undefined, width = 1200): string {
+  if (!url || !url.includes('res.cloudinary.com') || !url.includes('/image/upload/')) return url || '';
+  const parts = url.split('/image/upload/');
+  if (parts.length !== 2) return url;
+  const first = parts[1].split('/')[0];
+  if (!/^v\d+$/.test(first)) return url;
+  return parts[0] + '/image/upload/f_auto,q_auto,w_' + width + '/' + parts[1];
+}
+
 // Optional custom placeholders (data URLs) configured in the admin Image Manager.
 // When set they override the bundled default bottles. Updated by SettingsService.
 let customMen = '';
@@ -27,5 +47,6 @@ export function isCustomImage(url?: string): boolean {
 
 /** The image to show for a product: its own, else the branded gender placeholder. */
 export function productImage(p: { imageUrl?: string; gender?: string }): string {
-  return isCustomImage(p.imageUrl) ? p.imageUrl! : placeholderFor(p.gender);
+  const url = isCustomImage(p.imageUrl) ? p.imageUrl! : placeholderFor(p.gender);
+  return optimizedImage(url, 900);
 }

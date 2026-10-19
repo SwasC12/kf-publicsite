@@ -39,7 +39,7 @@ import { formatPrice, productImage } from './util';
                   @if (onSale(p)) { <span class="was">{{ price(p.price) }}</span> }
                   {{ price(eff(p)) }}
                 </span>
-                @if (p.inStock) {
+                @if (p.inStock && (p.stockQty == null || p.stockQty > 0)) {
                   <button class="add-btn" (click)="cart.add(p)"><app-icon name="plus" [size]="16" /> Add</button>
                 } @else { <button class="add-btn disabled" disabled>Sold out</button> }
               </div>
