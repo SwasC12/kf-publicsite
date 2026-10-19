@@ -30,7 +30,12 @@ export default {
     if (url.pathname.indexOf("/api/") === 0) {
       if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }), request);
       const origin = request.headers.get("Origin");
-      if (!originAllowed(origin, env)) return json({ error: "Origin not allowed" }, 403);
+      // /api/send-email is protected by a Firebase ID token (welcome) or an
+      // admin token/key (status/restock), so it may be called from the admin app
+      // on its own domain. Public order/promo endpoints stay origin-locked.
+      if (url.pathname !== "/api/send-email" && !originAllowed(origin, env)) {
+        return json({ error: "Origin not allowed" }, 403);
+      }
       if (request.method !== "POST") return cors(json({ error: "Method not allowed" }, 405), request);
       if (url.pathname === "/api/place-order") return cors(await handlePlaceOrder(request, env), request);
       if (url.pathname === "/api/validate-promo") return cors(await handleValidatePromo(request, env), request);
@@ -94,6 +99,17 @@ async function verifyIdToken(env, idToken) {
   }
 }
 
+async function adminAuthorized(request, env) {
+  const key = request.headers.get("x-admin-key") || "";
+  if (env.ADMIN_API_KEY && key === env.ADMIN_API_KEY) return true;
+  const auth = request.headers.get("Authorization") || "";
+  if (auth.indexOf("Bearer ") === 0 && env.ADMIN_UID) {
+    const user = await verifyIdToken(env, auth.slice(7));
+    if (user && user.localId === env.ADMIN_UID) return true;
+  }
+  return false;
+}
+
 async function handleSend(request, env) {
   if (!env.RESEND_API_KEY) return json({ error: "Email not configured" }, 503);
 
@@ -128,10 +144,21 @@ async function handleSend(request, env) {
     }
   }
 
+  if (type === "restock") {
+    if (!(await adminAuthorized(request, env))) return json({ error: "Forbidden" }, 403);
+    const product = clip(body.productName, 80) || "A fragrance you wanted";
+    try {
+      await sendEmail(env, { from: FROM_HELLO, to, replyTo: "hello@kauafragrances.co.za",
+        subject: "Back in stock: " + product, html: restockHtml(product) });
+      return json({ ok: true });
+    } catch (e) {
+      return json({ error: "Send failed" }, 502);
+    }
+  }
+
   if (type === "status") {
     // Order-status mail is an admin action, never a public one.
-    const key = request.headers.get("x-admin-key") || "";
-    if (!env.ADMIN_API_KEY || key !== env.ADMIN_API_KEY) return json({ error: "Forbidden" }, 403);
+    if (!(await adminAuthorized(request, env))) return json({ error: "Forbidden" }, 403);
     const ref = clip(body.reference, 20) || "KF-";
     const st = body.status === "fulfilled" ? "fulfilled" : "paid";
     const subject = st === "paid"

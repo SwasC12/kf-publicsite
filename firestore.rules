@@ -1,86 +1,96 @@
 rules_version = '2';
 
-// Kauā Fragrances — public site rules.
+// Firestore security rules for the shared Kauā Fragrances project (perfume-3b075).
+// Used by BOTH the Oil Tracker admin app and the kf-publicsite storefront.
 //
-// IMPORTANT: the canonical copy lives in the Oil Tracker admin repo
-// (Perfume/firestore.rules). Merge this file into that one and publish from
-// there; both apps share the perfume-3b075 project.
-//
-// Replace PASTE_ADMIN_UID with the admin user's Firebase Auth UID (the same
-// value already used by the admin app).
+// SETUP: replace the UID in isAdmin() if the admin user changes, then paste this
+// whole file into console -> Firestore Database -> Rules -> Publish.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isAdmin() {
-      return request.auth != null && request.auth.uid == 'PASTE_ADMIN_UID';
+    // Personal Oil Tracker sync — no login; knowing the 6+ char code grants access.
+    match /workspaces/{code} {
+      allow get, write: if code.size() >= 6;
+      allow list: if false;
     }
 
-    // Catalogue — shoppers only ever see active products.
+    // Shop catalogue — shoppers only see active products; admin manages all.
     match /products/{id} {
       allow read: if resource.data.active == true || isAdmin();
       allow write: if isAdmin();
     }
 
-    // Editable homepage content and store settings (contact + EFT details).
-    match /siteContent/{id} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-    match /settings/{id} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    // Promo codes are checked by the Worker, never read by the browser.
-    match /discounts/{code} {
-      allow read, write: if isAdmin();
-    }
-
-    // Orders are written by the Worker (Admin SDK bypasses these rules).
-    // Customers can read only their own order history.
-    match /orders/{id} {
-      allow read: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
-      allow create, update, delete: if isAdmin();
-    }
-
-    // Public "track order" lookup by reference, one document at a time.
-    match /orderStatus/{reference} {
-      allow get: if true;
-      allow list: if false;
-      allow write: if isAdmin();
-    }
-
-    match /customers/{uid} {
-      allow read, write: if isAdmin() || (request.auth != null && request.auth.uid == uid);
-    }
-
-    // Reviews are moderated: the public sees approved ones only.
+    // Product reviews — anyone may post one, but it arrives unapproved and stays
+    // hidden until the admin approves it. The public shop queries approved == true.
     match /reviews/{id} {
       allow read: if resource.data.approved == true || isAdmin();
-      allow create: if request.resource.data.approved == false
-        && request.resource.data.keys().hasOnly(['productId', 'name', 'rating', 'text', 'approved', 'createdAt'])
+      allow create: if request.resource.data.rating is int
+        && request.resource.data.rating >= 1 && request.resource.data.rating <= 5
         && request.resource.data.productId is string
         && request.resource.data.name is string
         && request.resource.data.name.size() <= 60
         && request.resource.data.text is string
         && request.resource.data.text.size() <= 600
-        && request.resource.data.rating is int
-        && request.resource.data.rating >= 1
-        && request.resource.data.rating <= 5;
+        && request.resource.data.approved == false
+        && request.resource.data.keys().hasOnly(['productId', 'name', 'rating', 'text', 'approved', 'createdAt']);
       allow update, delete: if isAdmin();
     }
 
-    // "Notify me when back in stock" — write-only for shoppers.
+    // Editable storefront content (banners, hero, announcement) — public read, admin write.
+    match /siteContent/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Store settings (delivery, banking, whatsapp…) — public read, admin write.
+    match /settings/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Public order-status lookup (by reference) for the Track page.
+    // Written by the shop Worker (Admin SDK) and by the admin app.
+    match /orderStatus/{ref} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Customer profiles — each customer manages their own; the admin can view/modify all.
+    match /customers/{uid} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+      allow write: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+    }
+
+    // Promo codes are checked by the shop Worker (Admin SDK). No browser reads.
+    match /discounts/{code} {
+      allow read, write: if isAdmin();
+    }
+
+    // "Notify me when back in stock" requests — anyone can create; only admin reads/manages.
     match /restockRequests/{id} {
-      allow create: if request.resource.data.keys().hasOnly(['productId', 'productName', 'email', 'createdAt', 'notified'])
-        && request.resource.data.notified == false
-        && request.resource.data.productId is string
-        && request.resource.data.productName is string
-        && request.resource.data.productName.size() <= 120
+      allow create: if request.resource.data.notified == false
         && request.resource.data.email is string
-        && request.resource.data.email.size() <= 200;
+        && request.resource.data.email.size() < 200
+        && request.resource.data.productId is string;
       allow read, update, delete: if isAdmin();
+    }
+
+    // Orders — written by the shop Worker (Admin SDK) or the admin POS screen.
+    // A signed-in customer may read only their own order history.
+    match /orders/{id} {
+      allow read: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Business expenses (Budgeting tab) — admin only, never public.
+    match /expenses/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    function isAdmin() {
+      return request.auth != null && request.auth.uid == 'iQjj1HHAUAM6BzWGcoYWepQCpRx2';
     }
   }
 }

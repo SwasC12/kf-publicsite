@@ -103,7 +103,11 @@ npx wrangler secret put FIREBASE_SERVICE_ACCOUNT
 # The public Firebase web API key (used to verify signed-in customers)
 npx wrangler secret put FIREBASE_API_KEY
 
-# Random secret used by the admin app when it sends status emails
+# The admin user's Firebase UID (same value as isAdmin() in firestore.rules).
+# Used to verify the admin app's ID token for status/restock emails.
+npx wrangler secret put ADMIN_UID
+
+# Optional: only for server-side scripts; the browser admin app uses its ID token.
 npx wrangler secret put ADMIN_API_KEY
 
 # Resend key (already used by the order emails)

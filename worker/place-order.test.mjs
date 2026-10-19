@@ -46,6 +46,11 @@ globalThis.fetch = async function (input, opts) {
     lastCommit = JSON.parse(opts.body);
     return json({ writeResults: [] });
   }
+  if (url.includes('identitytoolkit.googleapis.com')) {
+    const reqBody = String(opts && opts.body ? opts.body : '');
+    if (reqBody.includes('good-token')) return json({ users: [{ localId: 'uid1', email: 'admin@example.com' }] });
+    return json({ error: { message: 'INVALID_ID_TOKEN' } }, 400);
+  }
   if (url.includes('api.resend.com')) return json({ id: 'email-1' });
   return json({ error: { code: 500, message: 'unexpected ' + url, status: 'INTERNAL' } }, 500);
 };
@@ -54,6 +59,8 @@ const env = {
   RESEND_API_KEY: 're_test',
   FIREBASE_SERVICE_ACCOUNT: sa,
   ADMIN_API_KEY: 'admin-secret',
+  ADMIN_UID: 'uid1',
+  FIREBASE_API_KEY: 'web-key',
 };
 
 function request(path, body, headers = {}) {
@@ -127,6 +134,14 @@ res = await worker.fetch(request('/api/send-email', { type: 'status', to: 'victi
 check('public status email blocked', res.status === 403);
 res = await worker.fetch(request('/api/send-email', { type: 'welcome', to: 'victim@example.com' }), env);
 check('welcome requires auth', res.status === 401);
+
+// 7. Admin app can send status/restock mail with its Firebase ID token.
+const adminAuth = { Authorization: ['Bearer', 'good-token'].join(' ') };
+res = await worker.fetch(request('/api/send-email', { type: 'status', to: 'buyer@example.com', reference: 'KF-AAAAA', status: 'paid', total: 100 }, adminAuth), env);
+check('admin status email allowed', res.status === 200, await res.clone().json());
+const badAuth = { Authorization: ['Bearer', 'bad-token'].join(' ') };
+res = await worker.fetch(request('/api/send-email', { type: 'restock', to: 'buyer@example.com', productName: 'Olympea' }, badAuth), env);
+check('restock rejects non-admin token', res.status === 403, await res.clone().json());
 
 console.log(failures === 0 ? 'ALL TESTS PASSED' : failures + ' TEST(S) FAILED');
 process.exit(failures === 0 ? 0 : 1);
