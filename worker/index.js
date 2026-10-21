@@ -44,6 +44,10 @@ export default {
     }
     return withSecurityHeaders(await env.ASSETS.fetch(request));
   },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(expireUnpaidOrders(env));
+  },
 };
 
 const CSP = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; " +
@@ -165,7 +169,8 @@ async function handleSend(request, env) {
       ? "Payment received — order " + ref : "Your order " + ref + " is on its way";
     try {
       await sendEmail(env, { from: FROM_ORDERS, to, replyTo: "orders@kauafragrances.co.za",
-        subject: subject, html: statusHtml(name, ref, st, Number(body.total) || 0) });
+        subject: subject, html: statusHtml(name, ref, st, Number(body.total) || 0,
+          clip(body.courier, 80), clip(body.trackingNumber, 80)) });
       return json({ ok: true });
     } catch (e) {
       return json({ error: "Send failed" }, 502);
@@ -396,6 +401,32 @@ class Firestore {
     await this.call(":commit", { method: "POST", body: { transaction: tx, writes: writes } });
   }
 
+  /** Run a simple equality query and return { id, ...fields } documents. */
+  async query(collectionId, field, op, value, max = 200) {
+    const body = {
+      structuredQuery: {
+        from: [{ collectionId: collectionId }],
+        where: { fieldFilter: { field: { fieldPath: field }, op: op, value: toFs(value) } },
+        limit: max,
+      },
+    };
+    const data = await this.call(":runQuery", { method: "POST", body: body });
+    return (data || [])
+      .filter(function (row) { return row && row.document; })
+      .map(function (row) {
+        const id = row.document.name.split("/").pop();
+        return Object.assign({ id: id }, fromFs(row.document));
+      });
+  }
+
+  /** Patch selected fields on one document. */
+  async patch(path, fields) {
+    const mask = Object.keys(fields)
+      .map(function (f) { return "updateMask.fieldPaths=" + encodeURIComponent(f); })
+      .join("&");
+    await this.call(path + "?" + mask, { method: "PATCH", body: { fields: mapFields(fields) } });
+  }
+
   async placeOrder(input) {
     let last = null;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -423,6 +454,9 @@ class Firestore {
       freeDeliveryThreshold: 500,
     }, settings);
 
+    if (cfg.storeOpen === false) {
+      throw httpError(400, cfg.storeClosedMessage || "The shop is currently closed. Please check back soon.");
+    }
     if (input.method === "delivery" && cfg.deliveryEnabled === false) {
       throw httpError(400, "Delivery is not available right now.");
     }
@@ -443,7 +477,9 @@ class Firestore {
           ? (p.name || "An item") + " is sold out."
           : "Only " + stock + " of " + (p.name || "that item") + " left.");
       }
-      rows.push({ line: line, product: p, doc: doc, unitPrice: effectivePrice(p) });
+      const unit = effectivePrice(p);
+      if (!(unit > 0)) throw httpError(400, (p.name || "An item") + " is not available for online checkout right now.");
+      rows.push({ line: line, product: p, doc: doc, unitPrice: unit });
     }
 
     const subtotal = round2(rows.reduce(function (sum, r) { return sum + r.unitPrice * r.line.qty; }, 0));
@@ -466,6 +502,7 @@ class Firestore {
     }
 
     const total = round2(Math.max(0, subtotal + fee - discountAmount));
+    if (!(total > 0)) throw httpError(400, "The order total must be greater than zero.");
 
     let reference = "KF-" + refCode(5);
     for (let i = 0; i < 5; i++) {
@@ -498,6 +535,10 @@ class Firestore {
       }),
       total: total,
       status: "pending",
+      channel: "online",
+      stockReserved: true,
+      stockRestored: false,
+      discountCounted: false,
       createdAt: now,
       updatedAt: now,
       serverCreatedAt: new Date(),
@@ -526,17 +567,43 @@ class Firestore {
       },
       currentDocument: { exists: false },
     });
-    if (discountDoc && discountAmount > 0) {
-      const used = Number(discount.usedCount || 0) + 1;
-      writes.push({
-        update: { name: discountDoc.name, fields: { usedCount: toFs(used) } },
-        updateMask: { fieldPaths: ["usedCount"] },
-        currentDocument: { updateTime: discountDoc.updateTime },
-      });
-    }
-
     await this.commit(tx, writes);
     return { order: order, settings: cfg };
+  }
+}
+
+async function expireUnpaidOrders(env) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT) return;
+  const fs = new Firestore(env);
+  const pending = await fs.query("orders", "status", "EQUAL", "pending");
+  const cutoff = Date.now() - 30 * 60 * 1000;
+
+  for (const order of pending) {
+    if (order.channel !== "online" || !order.stockReserved || order.stockRestored) continue;
+    if (Number(order.createdAt || 0) > cutoff) continue;
+
+    for (const item of order.items || []) {
+      try {
+        const doc = await fs.get("products/" + item.productId);
+        if (!doc || doc.data.stockQty == null) continue;
+        await fs.patch("products/" + item.productId, {
+          stockQty: Number(doc.data.stockQty) + Number(item.qty),
+          inStock: true,
+        });
+      } catch (e) { /* keep going */ }
+    }
+    try {
+      await fs.patch("orders/" + order.id, {
+        status: "cancelled",
+        cancelledReason: "expired",
+        stockRestored: true,
+        updatedAt: Date.now(),
+      });
+      await fs.patch("orderStatus/" + order.reference, {
+        status: "cancelled",
+        updatedAt: Date.now(),
+      });
+    } catch (e) { /* keep going */ }
   }
 }
 
@@ -749,7 +816,7 @@ function shell(inner) {
       <div style="text-align:center;color:#9a9086;font-size:12px;padding:20px;line-height:1.7">
         <a href="${SITE_URL}" style="color:#7d766c;text-decoration:none;font-weight:600">kauafragrances.co.za</a>
         &nbsp;·&nbsp; hello@kauafragrances.co.za<br/>
-        &copy; ${new Date().getFullYear()} Kauā Fragrances · Inspired-by fragrance oils
+        &copy; ${new Date().getFullYear()} Kauā Fragrances · One spray to last the day
       </div>
     </div>
   </div>`;
@@ -779,24 +846,34 @@ function restockHtml(product) {
     <p style="margin-top:20px">${BTN(SITE_URL, 'Shop now')}</p>`);
 }
 
-function statusHtml(name, reference, status, total) {
+function statusHtml(name, reference, status, total, courier, trackingNumber) {
+  const trackBlock = (courier || trackingNumber)
+    ? `<div style="background:#f7f5f1;border-radius:12px;padding:14px 18px;margin:16px 0;font-size:14px;color:#3b352f">
+        <div style="font-weight:800;text-transform:uppercase;letter-spacing:0.05em;font-size:11px;color:#7d766c;margin-bottom:6px">Delivery</div>
+        ${courier ? `<div><strong>Courier:</strong> ${esc(courier)}</div>` : ''}
+        ${trackingNumber ? `<div><strong>Tracking:</strong> ${esc(trackingNumber)}</div>` : ''}
+      </div>` : '';
   if (status === 'paid') {
     return shell(`
       <h1 style="font-size:22px;margin:0 0 8px">Payment received ✓</h1>
       <p style="line-height:1.6;color:#3b352f">Thanks, ${esc(name)} — we've received your payment for order
-        <strong>${esc(reference)}</strong>${total ? ` (${money(total)})` : ''}. We're getting it ready and will let you know when it's on its way.</p>`);
+        <strong>${esc(reference)}</strong>${total ? ` (${money(total)})` : ''}. We're getting it ready and will let you know when it's on its way.</p>
+      ${trackBlock}
+      <p style="margin-top:18px">${BTN(SITE_URL + '/track', 'Track order')}</p>`);
   }
   return shell(`
     <h1 style="font-size:22px;margin:0 0 8px">Your order is on its way 🖤</h1>
     <p style="line-height:1.6;color:#3b352f">Good news, ${esc(name)} — order <strong>${esc(reference)}</strong> has been dispatched.
-      Thank you for choosing Kauā Fragrances. One spray to last the day.</p>`);
+      Thank you for choosing Kauā Fragrances. One spray to last the day.</p>
+    ${trackBlock}
+    <p style="margin-top:18px">${BTN(SITE_URL + '/track', 'Track order')}</p>`);
 }
 
 function welcomeHtml(name) {
   return shell(`
     <h1 style="font-size:22px;margin:0 0 12px">Welcome, ${esc(name)} 🖤</h1>
     <p style="line-height:1.6;color:#3b352f">Thanks for creating an account at Kauā Fragrances. You can now check out faster and track your orders.</p>
-    <p style="line-height:1.6;color:#3b352f">Inspired-by fragrance oils, long-lasting and beautifully made — one spray to last the day.</p>
+    <p style="line-height:1.6;color:#3b352f">long-lasting and beautifully made — one spray to last the day.</p>
     <p style="margin-top:20px">${BTN(SITE_URL, 'Browse fragrances')}</p>`);
 }
 

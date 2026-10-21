@@ -1,7 +1,7 @@
 {
   "name": "Kaua Fragrances",
   "short_name": "Kaua",
-  "description": "Inspired-by fragrance oils. Order online, pay by EFT.",
+  "description": "Order online, pay by EFT.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

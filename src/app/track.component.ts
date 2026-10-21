@@ -8,7 +8,7 @@ import { IconComponent } from './icon.component';
 import { OrderStatus } from './models';
 import { formatPrice } from './util';
 
-interface StatusDoc { reference: string; status: OrderStatus; total: number; createdAt: number; updatedAt: number; }
+interface StatusDoc { reference: string; status: OrderStatus; total: number; createdAt: number; updatedAt: number; courier?: string; trackingNumber?: string; }
 const STEPS: OrderStatus[] = ['pending', 'paid', 'fulfilled'];
 
 @Component({
@@ -45,6 +45,13 @@ const STEPS: OrderStatus[] = ['pending', 'paid', 'fulfilled'];
             </ol>
           }
           <p class="track-total">Order total: <strong>{{ price(r.total) }}</strong></p>
+          @if (r.courier || r.trackingNumber) {
+            <div class="track-courier">
+              <span class="track-courier-label">Courier</span>
+              <strong>{{ r.courier || 'Courier' }}</strong>
+              @if (r.trackingNumber) { <span class="track-courier-no">{{ r.trackingNumber }}</span> }
+            </div>
+          }
         </div>
       }
     </div>

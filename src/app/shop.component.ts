@@ -100,17 +100,16 @@ import { formatPrice, optimizedImage, productImage } from './util';
         </div>
       </div>
 
-      @if (categories().length > 1 || genders().length > 1) {
-        <div class="chips">
-          <button class="chip" [class.active]="category() === 'all' && gender() === 'all'" (click)="category.set('all'); gender.set('all')">All</button>
+      <div class="chips">
+          <button class="chip" [class.active]="category() === 'all' && gender() === 'all' && !inStockOnly()" (click)="category.set('all'); gender.set('all'); inStockOnly.set(false)">All</button>
+          <button class="chip" [class.active]="inStockOnly()" (click)="inStockOnly.set(!inStockOnly())">In stock</button>
           @for (g of genders(); track g) {
             <button class="chip" [class.active]="gender() === g" (click)="gender.set(gender() === g ? 'all' : g)">{{ g }}</button>
           }
           @for (c of categories(); track c) {
             <button class="chip" [class.active]="category() === c" (click)="category.set(category() === c ? 'all' : c)">{{ c }}</button>
           }
-        </div>
-      }
+      </div>
 
       @if (svc.loading()) {
         <div class="grid">
@@ -196,6 +195,7 @@ export class ShopComponent implements OnDestroy {
   readonly search = signal('');
   readonly category = signal<'all' | string>('all');
   readonly gender = signal<'all' | string>('all');
+  readonly inStockOnly = signal(false);
   readonly sort = signal<'featured' | 'newest' | 'price-asc' | 'price-desc' | 'name'>('featured');
   readonly slide = signal(0);
   readonly hoverPaused = signal(false);
@@ -240,6 +240,7 @@ export class ShopComponent implements OnDestroy {
     const list = this.svc.products()
       .filter((p) => (cat === 'all' ? true : p.category === cat))
       .filter((p) => (gen === 'all' ? true : p.gender === gen || p.gender === 'Unisex'))
+      .filter((p) => (this.inStockOnly() ? p.inStock && (p.stockQty == null || p.stockQty > 0) : true))
       .filter((p) => (q
         ? p.name.toLowerCase().includes(q) || (p.inspiredBy ?? '').toLowerCase().includes(q)
         : true));
@@ -275,7 +276,7 @@ export class ShopComponent implements OnDestroy {
     this.seo.page('Kauā Fragrances');
     // Reset to the first page whenever the filter/search/sort changes.
     effect(() => {
-      this.search(); this.category(); this.gender(); this.sort();
+      this.search(); this.category(); this.gender(); this.inStockOnly(); this.sort();
       this.visibleCount.set(this.pageSize);
     });
     this.route.queryParamMap.subscribe((q) => {

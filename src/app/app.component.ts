@@ -92,8 +92,10 @@ import { IconComponent } from './icon.component';
         <a routerLink="/faq">FAQ</a>
         <a routerLink="/track">Track order</a>
         <a routerLink="/contact">Contact</a>
+        <a routerLink="/terms">Terms</a>
+        <a routerLink="/privacy">Privacy</a>
       </nav>
-      <p class="footer-sub">&copy; {{ year }} Kauā Fragrances · Payment by EFT · Inspired-by fragrance oils</p>
+      <p class="footer-sub">&copy; {{ year }} Kauā Fragrances · Payment by EFT ·</p>
     </footer>
 
     @if (toast(); as t) {

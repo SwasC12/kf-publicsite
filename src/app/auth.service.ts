@@ -1,6 +1,7 @@
 import { Injectable, computed, signal } from '@angular/core';
 import {
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
@@ -34,6 +35,21 @@ export class AuthService {
 
   async signIn(email: string, password: string): Promise<boolean> {
     return this.run(() => signInWithEmailAndPassword(getAuthInstance(), email.trim(), password).then(() => {}));
+  }
+
+  async resetPassword(email: string): Promise<boolean> {
+    this.busy.set(true);
+    this.error.set(null);
+    try {
+      await sendPasswordResetEmail(getAuthInstance(), email.trim());
+      return true;
+    } catch (e: any) {
+      const c = e?.code ?? '';
+      this.error.set(c.includes('invalid-email') ? 'That email address looks invalid.' : 'Could not send the reset email.');
+      return false;
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   async signOut(): Promise<void> {

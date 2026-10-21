@@ -3,6 +3,17 @@ export function formatPrice(v: number | null | undefined): string {
   return 'R' + Number(v).toFixed(2).replace(/\.00$/, '');
 }
 
+export const SA_PROVINCES = [
+  'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo',
+  'Mpumalanga', 'Northern Cape', 'North West', 'Western Cape',
+];
+
+/** South African mobile/landline: 0XXXXXXXXX or +27XXXXXXXXX. */
+export function isValidPhone(v: string): boolean {
+  const digits = v.replace(/[^\d+]/g, '');
+  return /^(\+27|0)\d{9}$/.test(digits);
+}
+
 /** Basic e-mail validation — rejects obviously invalid addresses. */
 export function isValidEmail(v: string): boolean {
   const s = v.trim();

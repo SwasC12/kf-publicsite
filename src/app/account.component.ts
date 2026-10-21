@@ -31,6 +31,10 @@ import { formatPrice } from './util';
               </button>
             </span>
           </label>
+          @if (mode() === 'in') {
+            <button type="button" class="linkbtn forgot" (click)="forgot()" [disabled]="auth.busy()">Forgot password?</button>
+          }
+          @if (resetSent()) { <p class="form-ok">If that email has an account, a reset link is on its way.</p> }
           @if (auth.error()) { <p class="form-error">{{ auth.error() }}</p> }
           <button type="submit" class="btn primary big" [disabled]="auth.busy()">
             {{ auth.busy() ? 'Please wait…' : (mode() === 'in' ? 'Sign in' : 'Create account') }}
@@ -115,6 +119,7 @@ export class AccountComponent {
   delivery: Address = emptyAddress();
   sameAsBilling = false;
   readonly saved = signal(false);
+  readonly resetSent = signal(false);
 
   price = formatPrice;
 
@@ -130,7 +135,20 @@ export class AccountComponent {
     });
   }
 
-  toggle(): void { this.mode.update((m) => (m === 'in' ? 'up' : 'in')); this.auth.error.set(null); }
+  toggle(): void {
+    this.mode.update((m) => (m === 'in' ? 'up' : 'in'));
+    this.auth.error.set(null);
+    this.resetSent.set(false);
+  }
+
+  async forgot(): Promise<void> {
+    if (!this.email.trim()) {
+      this.auth.error.set('Enter your email address first.');
+      return;
+    }
+    const ok = await this.auth.resetPassword(this.email);
+    if (ok) this.resetSent.set(true);
+  }
 
   async submit(): Promise<void> {
     if (this.mode() === 'in') {

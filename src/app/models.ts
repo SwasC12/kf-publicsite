@@ -144,6 +144,10 @@ export interface StoreSettings {
   bankAccountNumber?: string;
   bankBranchCode?: string;
   bankAccountType?: string;
+  companyName?: string;
+  companyRegistration?: string;
+  companyAddress?: string;
+  vatNumber?: string;
   // Custom placeholder images (data URLs) set from the admin Image Manager.
   placeholderMen?: string;
   placeholderWomen?: string;

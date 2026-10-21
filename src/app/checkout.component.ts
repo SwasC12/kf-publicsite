@@ -9,7 +9,7 @@ import { CustomerService } from './customer.service';
 import { SettingsService } from './settings.service';
 import { Address, DeliveryMethod, Discount, emptyAddress } from './models';
 import { discountError, computeDiscount, DiscountLine } from './discount-util';
-import { formatPrice, isValidEmail } from './util';
+import { SA_PROVINCES, formatPrice, isValidEmail, isValidPhone } from './util';
 
 @Component({
   selector: 'app-checkout',
@@ -31,7 +31,8 @@ import { formatPrice, isValidEmail } from './util';
           <label>Full name*<input type="text" name="name" [(ngModel)]="name" required autocomplete="name" /></label>
           <label>Email*<input type="email" name="email" [(ngModel)]="email" required autocomplete="email" (blur)="emailTouched.set(true)" /></label>
           @if (emailError()) { <p class="form-error">{{ emailError() }}</p> }
-          <label>Phone / WhatsApp*<input type="tel" name="phone" [(ngModel)]="phone" required autocomplete="tel" /></label>
+          <label>Phone / WhatsApp*<input type="tel" name="phone" [(ngModel)]="phone" required autocomplete="tel" (blur)="phoneTouched.set(true)" /></label>
+          @if (phoneError()) { <p class="form-error">{{ phoneError() }}</p> }
 
           <h2 class="block-title">Delivery</h2>
           <div class="method-toggle">
@@ -70,6 +71,12 @@ import { formatPrice, isValidEmail } from './util';
           @if (promoError()) { <p class="form-error">{{ promoError() }}</p> }
 
           <p class="pay-info">Payment is by <strong>EFT / bank transfer</strong>. After placing your order you'll get a reference and our banking details — no card needed.</p>
+          <label class="chk terms">
+            <input type="checkbox" [(ngModel)]="termsAccepted" name="terms" />
+            <span>I agree to the <a routerLink="/terms" target="_blank">Terms of Sale</a> and
+              <a routerLink="/privacy" target="_blank">Privacy Policy</a>.</span>
+          </label>
+          @if (termsError()) { <p class="form-error">Please accept the terms to place your order.</p> }
           @if (orders.error()) { <div class="notice error">{{ orders.error() }}</div> }
           <button type="submit" class="btn primary big" [disabled]="!valid() || orders.placing()">
             {{ orders.placing() ? 'Placing order…' : 'Place order' }}
@@ -88,6 +95,11 @@ import { formatPrice, isValidEmail } from './util';
           @if (method() === 'delivery' && fee() > 0 && threshold()) {
             <p class="ship-hint">Spend {{ price(threshold()! - cart.total()) }} more for free delivery.</p>
           }
+          <div class="trust-row">
+            <span>Secure checkout</span>
+            <span>Nationwide delivery</span>
+            <span>7-day returns</span>
+          </div>
         </aside>
       </div>
     }
@@ -97,7 +109,12 @@ import { formatPrice, isValidEmail } from './util';
       <label>Address line 2<input type="text" [ngModel]="a.line2" (ngModelChange)="a.line2=$event" name="l2" /></label>
       <div class="row">
         <label>City*<input type="text" [ngModel]="a.city" (ngModelChange)="a.city=$event" name="city" required /></label>
-        <label>Province<input type="text" [ngModel]="a.province" (ngModelChange)="a.province=$event" name="prov" /></label>
+        <label>Province
+          <select [ngModel]="a.province" (ngModelChange)="a.province=$event" name="prov">
+            <option value="">Select province…</option>
+            @for (p of provinces; track p) { <option [value]="p">{{ p }}</option> }
+          </select>
+        </label>
       </div>
       <div class="row">
         <label>Postal code<input type="text" [ngModel]="a.postalCode" (ngModelChange)="a.postalCode=$event" name="pc" /></label>
@@ -121,8 +138,15 @@ export class CheckoutComponent {
   readonly applied = signal<Discount | null>(null);
   readonly promoError = signal<string | null>(null);
   readonly emailTouched = signal(false);
+  readonly phoneTouched = signal(false);
+  readonly termsError = signal(false);
+  termsAccepted = false;
+  readonly provinces = SA_PROVINCES;
   readonly emailError = computed(() =>
     this.emailTouched() && !isValidEmail(this.email) ? 'Please enter a valid email address.' : null,
+  );
+  readonly phoneError = computed(() =>
+    this.phoneTouched() && !isValidPhone(this.phone) ? 'Enter a valid SA number, e.g. 082 123 4567.' : null,
   );
 
   readonly threshold = computed(() => this.settings.settings().freeDeliveryThreshold ?? null);
@@ -191,13 +215,15 @@ export class CheckoutComponent {
   }
 
   valid(): boolean {
-    const base = !!this.name.trim() && isValidEmail(this.email) && !!this.phone.trim();
+    const base = !!this.name.trim() && isValidEmail(this.email) && isValidPhone(this.phone) && this.termsAccepted;
     if (this.method() === 'collection') return base;
     return base && !!this.delivery.line1.trim() && !!this.delivery.city.trim();
   }
 
   async place(): Promise<void> {
     this.emailTouched.set(true);
+    this.phoneTouched.set(true);
+    this.termsError.set(!this.termsAccepted);
     if (!this.valid()) return;
     const order = await this.orders.place(
       { name: this.name.trim(), email: this.email.trim(), phone: this.phone.trim(), note: this.note.trim() || undefined },

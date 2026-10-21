@@ -6,7 +6,7 @@ import { optimizedImage } from './util';
 
 const SITE = 'Kauā Fragrances';
 const BASE = 'https://kauafragrances.co.za';
-const DEFAULT_DESC = 'Inspired-by fragrance oils — long-lasting, affordable, beautifully made. One spray to last the day. Order online, pay by EFT.';
+const DEFAULT_DESC = 'Inspired by designer fragrances — long-lasting, affordable, beautifully made. One spray to last the day. Order online, pay by EFT.';
 const DEFAULT_IMG = `${BASE}/logo-lockup.png`;
 
 @Injectable({ providedIn: 'root' })
@@ -31,7 +31,7 @@ export class SeoService {
   product(p: Product): void {
     const url = `${BASE}/product/${p.id}`;
     const img = p.imageUrl ? optimizedImage(p.imageUrl, 1200) : DEFAULT_IMG;
-    const desc = p.description || `${p.name} — inspired-by fragrance oil from ${SITE}.`;
+    const desc = p.description || `${p.name} — inspired by designer perfumes from ${SITE}.`;
     this.page(p.name, desc, img, url);
     this.setProp('og:type', 'product');
     this.jsonLd({

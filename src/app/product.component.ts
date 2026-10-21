@@ -47,7 +47,10 @@ import { formatPrice, optimizedImage, placeholderFor, isCustomImage, productImag
             </div>
           }
           <h1>{{ p.name }}</h1>
-          @if (p.inspiredBy) { <p class="pd-inspired">Smells like <strong>{{ p.inspiredBy }}</strong></p> }
+          @if (p.inspiredBy) {
+            <p class="pd-inspired">Smells like <strong>{{ p.inspiredBy }}</strong></p>
+            <p class="pd-disclaimer">Our own interpretation — not affiliated with the original brand.</p>
+          }
           @if (p.size) { <span class="p-size">{{ p.size }}</span> }
 
           @if ((p.ratingCount || 0) > 0) {

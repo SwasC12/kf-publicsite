@@ -47,6 +47,11 @@ import { formatPrice } from './util';
         @if (threshold() && cart.total() < threshold()!) {
           <p class="ship-hint">Spend {{ price(threshold()! - cart.total()) }} more for free delivery.</p>
         }
+        <div class="trust-row">
+          <span>Secure checkout</span>
+          <span>Nationwide delivery</span>
+          <span>7-day returns</span>
+        </div>
         <a class="btn primary big" routerLink="/checkout">
           Checkout <app-icon name="arrow-right" [size]="18" />
         </a>

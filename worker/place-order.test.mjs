@@ -93,7 +93,8 @@ check('server recomputes total 240', data.order && data.order.total === 240, dat
 check('server recomputes item price 100', data.order && data.order.items[0].price === 100);
 check('reference format', data.order && /^KF-[A-Z2-9]{5}$/.test(data.order.reference), data.order && data.order.reference);
 check('stock write 5-2=3', !!lastCommit && lastCommit.writes.some((w) => w.update && w.update.fields && w.update.fields.stockQty && w.update.fields.stockQty.integerValue === '3'));
-check('discount usedCount 1', !!lastCommit && lastCommit.writes.some((w) => w.update && w.update.fields && w.update.fields.usedCount && w.update.fields.usedCount.integerValue === '1'));
+check('discount deferred until paid', !!lastCommit && !lastCommit.writes.some((w) => w.update && w.update.fields && w.update.fields.usedCount));
+check('stock reserved on order', data.order && data.order.stockReserved === true);
 check('two emails sent', calls.filter((c) => c.url.includes('api.resend.com')).length === 2);
 
 // 2. Insufficient stock is rejected.
