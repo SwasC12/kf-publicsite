@@ -138,9 +138,15 @@ export class CheckoutComponent {
       this.fee(),
       this.applied()?.code,
       this.discountAmount(),
+      'yoco',
     );
     if (order) {
       this.cart.clear();
+      const redirect = this.orders.redirectUrl();
+      if (redirect) {
+        window.location.href = redirect;
+        return;
+      }
       this.router.navigate(['/order-confirmed']);
     }
   }

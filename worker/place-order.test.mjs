@@ -105,6 +105,7 @@ check('stock write 5-2=3', !!lastCommit && lastCommit.writes.some((w) => w.updat
 check('discount deferred until paid', !!lastCommit && !lastCommit.writes.some((w) => w.update && w.update.fields && w.update.fields.usedCount));
 check('stock reserved on order', data.order && data.order.stockReserved === true);
 check('two emails sent', calls.filter((c) => c.url.includes('api.resend.com')).length === 2);
+check('writes omit HTTP prefix', !!lastCommit && lastCommit.writes.filter((w) => w.update && w.update.name).every((w) => !w.update.name.startsWith('http')));
 
 // 1b. A sized product prices and decrements the selected size.
 calls = []; lastCommit = null;

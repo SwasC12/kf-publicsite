@@ -862,6 +862,26 @@ h1, h2, h3 {
   .site-footer { padding: 36px 16px 32px; }
 }
 
+/* Checkout mobile layout */
+@media (max-width: 860px) {
+  .checkout-grid { grid-template-columns: 1fr; gap: 18px; }
+  .checkout-form, .order-summary { padding: 18px; }
+  .checkout-form .row { display: flex; flex-direction: column; gap: 0; }
+  .checkout-form .row > label { width: 100%; }
+  .method { min-width: 0; width: 100%; }
+  .promo-row { flex-wrap: wrap; }
+  .promo-row input { min-width: 0; }
+  .order-summary { position: static; }
+}
+@media (max-width: 480px) {
+  .site-main { padding: 16px 12px 44px; }
+  .checkout-form, .order-summary { padding: 14px; }
+  .checkout-form label { font-size: 12px; }
+  .method { font-size: 13px; padding: 11px 12px; }
+  .checkout-form input, .checkout-form textarea, .checkout-form select { font-size: 16px; }
+  .checkout-form h2 { font-size: 17px; }
+}
+
 /* Legal pages, trust and order tracking */
 .legal { max-width: 780px; }
 .legal .block-title {

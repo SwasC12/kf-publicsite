@@ -69,7 +69,7 @@
           @if (applied()) { <p class="promo-ok">Code {{ applied()!.code }} applied — {{ discountAmount() > 0 ? '−' + price(discountAmount()) : 'no discount' }}</p> }
           @if (promoError()) { <p class="form-error">{{ promoError() }}</p> }
 
-          <p class="pay-info">Payment is by <strong>EFT / bank transfer</strong>. After placing your order you'll get a reference and our banking details — no card needed.</p>
+          <div class="pay-info"><strong>Secure card payment</strong><br />You'll be redirected to <strong>Yoco</strong> to pay securely. Your card details never touch our site.</div>
           <label class="chk terms">
             <input type="checkbox" [(ngModel)]="termsAccepted" name="terms" />
             <span>I agree to the <a routerLink="/terms" target="_blank">Terms of Sale</a> and
@@ -78,7 +78,7 @@
           @if (termsError()) { <p class="form-error">Please accept the terms to place your order.</p> }
           @if (orders.error()) { <div class="notice error">{{ orders.error() }}</div> }
           <button type="submit" class="btn primary big" [disabled]="!valid() || orders.placing()">
-            {{ orders.placing() ? 'Placing order…' : 'Place order' }}
+            {{ orders.placing() ? 'Starting secure payment…' : 'Pay securely' }}
           </button>
         </form>
 

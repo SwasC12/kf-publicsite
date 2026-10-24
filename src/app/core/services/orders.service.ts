@@ -9,6 +9,7 @@ export class OrdersService {
   readonly lastOrder = signal<Order | null>(this.readLast());
   readonly placing = signal(false);
   readonly error = signal<string | null>(null);
+  readonly redirectUrl = signal<string | null>(null);
 
   /**
    * Places an order on the server. The Worker re-reads every product, works out
@@ -24,6 +25,7 @@ export class OrdersService {
     _deliveryFee: number,
     discountCode?: string,
     _discountAmount = 0,
+    paymentMethod: 'eft' | 'yoco' = 'yoco',
   ): Promise<Order | null> {
     if (!items.length) return null;
     this.placing.set(true);
@@ -44,6 +46,7 @@ export class OrdersService {
           deliveryMethod,
           items: items.map((i) => ({ productId: i.productId, sizeKey: i.sizeKey || '', qty: i.qty })),
           discountCode: discountCode || '',
+          paymentMethod,
         }),
       });
 
@@ -54,6 +57,7 @@ export class OrdersService {
       }
 
       const order = data.order as Order;
+      this.redirectUrl.set(data.redirectUrl || null);
       this.lastOrder.set(order);
       this.writeLast(order);
       return order;

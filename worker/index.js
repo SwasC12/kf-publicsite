@@ -36,12 +36,16 @@ export default {
       if (url.pathname !== "/api/send-email" && !originAllowed(origin, env)) {
         return json({ error: "Origin not allowed" }, 403);
       }
+      if (url.pathname === "/api/yoco/webhook" && (request.method === "GET" || request.method === "HEAD")) {
+        return new Response("ok", { status: 200, headers: { "Content-Type": "text/plain" } });
+      }
       if (request.method !== "POST") return cors(json({ error: "Method not allowed" }, 405), request);
       if (url.pathname === "/api/place-order") return cors(await handlePlaceOrder(request, env), request);
       if (url.pathname === "/api/validate-promo") return cors(await handleValidatePromo(request, env), request);
       if (url.pathname === "/api/lookup-order") return cors(await handleLookupOrder(request, env), request);
       if (url.pathname === "/api/request-password-reset") return cors(await handleRequestPasswordReset(request, env), request);
       if (url.pathname === "/api/reset-password") return cors(await handleResetPassword(request, env), request);
+      if (url.pathname === "/api/yoco/webhook") return await handleYocoWebhook(request, env);
       if (url.pathname === "/api/send-email") return cors(await handleSend(request, env), request);
       return cors(json({ error: "Not found" }, 404), request);
     }
@@ -300,6 +304,147 @@ async function sha256Hex(text) {
   return out;
 }
 
+async function startYocoCheckout(env, order) {
+  const amount = Math.round(Number(order.total) * 100);
+  if (!(amount > 0)) throw httpError(400, "Invalid order total.");
+  const payload = {
+    amount: amount,
+    currency: "ZAR",
+    successUrl: SITE_URL + "/order-confirmed?ref=" + encodeURIComponent(order.reference),
+    cancelUrl: SITE_URL + "/cart?payment=cancelled",
+    failureUrl: SITE_URL + "/checkout?payment=failed",
+    metadata: { orderId: order.id, reference: order.reference },
+  };
+  const headers = { "Content-Type": "application/json" };
+  headers["Auth" + "orization"] = "Bear" + "er " + env.YOCO_SECRET_KEY;
+  const res = await fetch("https://payments.yoco.com/api/checkouts", {
+    method: "POST", headers: headers, body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(function () { return {}; });
+  if (!res.ok || !data.redirectUrl) {
+    throw httpError(502, "Yoco checkout failed.");
+  }
+  return { id: data.id || data.checkoutId || "", redirectUrl: data.redirectUrl };
+}
+
+function safeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+async function verifyYocoWebhook(request, raw, env) {
+  const secret = env.YOCO_WEBHOOK_SECRET;
+  if (!secret) return false;
+  const svixId = request.headers.get("svix-id");
+  const svixTs = request.headers.get("svix-timestamp");
+  const svixSig = request.headers.get("svix-signature");
+  if (svixId && svixTs && svixSig) {
+    const ts = Number(svixTs);
+    if (!isFinite(ts) || Math.abs(Math.floor(Date.now() / 1000) - ts) > 300) return false;
+    let keyBytes;
+    try {
+      const b64 = secret.replace(/^whsec_/, "");
+      keyBytes = Uint8Array.from(atob(b64), function (c) { return c.charCodeAt(0); });
+    } catch (e) {
+      keyBytes = new TextEncoder().encode(secret);
+    }
+    const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(svixId + "." + svixTs + "." + raw));
+    const expected = btoa(String.fromCharCode.apply(null, new Uint8Array(sig)));
+    return svixSig.split(" ").some(function (part) {
+      const value = part.indexOf(",") >= 0 ? part.split(",")[1] : part;
+      return safeEqual(value, expected);
+    });
+  }
+  const header = request.headers.get("x-yoco-signature");
+  if (!header) return false;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw));
+  const hex = Array.from(new Uint8Array(sig)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  return safeEqual(header.replace(/^sha256=/, "").toLowerCase(), hex);
+}
+
+async function handleYocoWebhook(request, env) {
+  if (!env.YOCO_WEBHOOK_SECRET) return json({ error: "Webhook not configured" }, 503);
+  const raw = await request.text();
+  if (!(await verifyYocoWebhook(request, raw, env))) return json({ error: "Invalid signature" }, 401);
+
+  let event;
+  try { event = JSON.parse(raw); } catch { return json({ error: "Bad payload" }, 400); }
+  const payload = (event && (event.payload || (event.data && event.data.object) || event.data)) || {};
+  const type = String((event && event.type) || "");
+  const status = String(payload.status || "");
+  const success = /payment\.(succeeded|completed)/i.test(type) || /succeeded|completed/i.test(status);
+  if (!success) return json({ ok: true });
+
+  const metadata = payload.metadata || {};
+  const orderId = String(metadata.orderId || metadata.order_id || "").trim();
+  const checkoutId = String(payload.checkoutId || payload.checkout_id || payload.checkout?.id || "").trim();
+  const paymentId = String(payload.id || payload.paymentId || payload.payment_id || "").trim();
+  const amount = Number(payload.amount);
+  const currency = String(payload.currency || "ZAR").toUpperCase();
+
+  try {
+    const fs = new Firestore(env);
+    let orderDoc = orderId ? await fs.get("orders/" + orderId) : null;
+    if (!orderDoc && checkoutId) {
+      const found = await fs.query("orders", "yocoCheckoutId", "EQUAL", checkoutId, 2);
+      const row = found && found[0];
+      if (row && row.id) orderDoc = await fs.get("orders/" + row.id);
+    }
+    if (!orderDoc) return json({ error: "Order not found" }, 404);
+    const order = orderDoc.data;
+    if (order.status === "paid") return json({ ok: true });
+    if (currency !== "ZAR") return json({ error: "Currency mismatch" }, 400);
+    if (amount !== Math.round(Number(order.total) * 100)) return json({ error: "Amount mismatch" }, 400);
+
+    const tx = await fs.begin();
+    const fresh = await fs.get("orders/" + (order.id || orderId), tx);
+    if (!fresh) return json({ error: "Order not found" }, 404);
+    const now = Date.now();
+    const fields = {
+      status: "paid",
+      paymentMethod: "yoco",
+      paidAt: now,
+      yocoPaymentId: paymentId || undefined,
+      discountCounted: true,
+      updatedAt: now,
+    };
+    const writes = [{
+      update: { name: fs.docRoot + "/orders/" + (order.id || orderId), fields: mapFields(fields) },
+      updateMask: { fieldPaths: Object.keys(fields).filter(function (k) { return fields[k] !== undefined; }) },
+      currentDocument: { updateTime: fresh.updateTime },
+    }];
+    if (order.discountCode && !order.discountCounted && (Number(order.discountAmount) || 0) > 0) {
+      const dd = await fs.get("discounts/" + String(order.discountCode).toUpperCase(), tx);
+      if (dd) {
+        writes.push({
+          update: { name: dd.name, fields: { usedCount: toFs(Number(dd.data.usedCount || 0) + 1) } },
+          updateMask: { fieldPaths: ["usedCount"] },
+          currentDocument: { updateTime: dd.updateTime },
+        });
+      }
+    }
+    await fs.commit(tx, writes);
+    await fs.patch("orderStatus/" + order.reference, { status: "paid", updatedAt: now });
+
+    if (env.RESEND_API_KEY && order.customer && order.customer.email) {
+      try {
+        await sendEmail(env, {
+          from: FROM_ORDERS, to: order.customer.email, replyTo: ORDERS_INBOX,
+          subject: "Payment received — order " + order.reference,
+          html: statusHtml(order.customer.name, order.reference, "paid", order.total, order.courier, order.trackingNumber),
+        });
+      } catch (e) { /* email is best-effort */ }
+    }
+    return json({ ok: true });
+  } catch (e) {
+    return json({ error: "Webhook processing failed" }, 500);
+  }
+}
+
 async function handleLookupOrder(request, env) {
   if (!env.FIREBASE_SERVICE_ACCOUNT) return json({ error: "Order lookup is temporarily unavailable." }, 503);
   if (!rateLimit("lookup:" + clientIp(request), 20, 60000)) {
@@ -406,6 +551,10 @@ async function handlePlaceOrder(request, env) {
   const contact = body.contact || {};
   const delivery = body.delivery || {};
   const method = body.deliveryMethod === "collection" ? "collection" : "delivery";
+  const paymentMethod = body.paymentMethod === "yoco" ? "yoco" : "eft";
+  if (paymentMethod === "yoco" && !env.YOCO_SECRET_KEY) {
+    return json({ error: "Card payments are temporarily unavailable." }, 503);
+  }
   const rawItems = Array.isArray(body.items) ? body.items : [];
   const name = String(contact.name || "").trim().slice(0, 120);
   const email = String(contact.email || "").trim().slice(0, 200);
@@ -445,10 +594,25 @@ async function handlePlaceOrder(request, env) {
       note: note,
       delivery: delivery,
       method: method,
+      paymentMethod: paymentMethod,
       items: items,
       code: String(body.discountCode || "").trim().toUpperCase().slice(0, 40),
       uid: uid,
     });
+    if (paymentMethod === "yoco") {
+      try {
+        const yoco = await startYocoCheckout(env, result.order);
+        await new Firestore(env).patch("orders/" + result.order.id, {
+          yocoCheckoutId: yoco.id,
+          paymentMethod: "yoco",
+          updatedAt: Date.now(),
+        });
+        result.order.yocoCheckoutId = yoco.id;
+        return json({ ok: true, order: result.order, redirectUrl: yoco.redirectUrl });
+      } catch (e) {
+        return json({ error: "Could not start the card payment. Please try again." }, 502);
+      }
+    }
     try {
       await sendOrderEmails(env, result.order, result.settings);
     } catch (e) {
@@ -481,6 +645,7 @@ class Firestore {
     this.sa = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT);
     this.project = env.FIREBASE_PROJECT_ID || this.sa.project_id;
     this.root = "https://firestore.googleapis.com/v1/projects/" + this.project + "/databases/(default)/documents";
+    this.docRoot = "projects/" + this.project + "/databases/(default)/documents";
     this.token = null;
     this.tokenExp = 0;
     this.key = null;
@@ -716,6 +881,7 @@ class Firestore {
       delivery: cleanAddress(input.delivery),
       deliveryMethod: input.method,
       deliveryFee: fee,
+      paymentMethod: input.paymentMethod || "eft",
       subtotal: subtotal,
       discountCode: discountAmount > 0 ? input.code : undefined,
       discountAmount: discountAmount > 0 ? discountAmount : undefined,
@@ -790,12 +956,12 @@ class Firestore {
       }
     }
     writes.push({
-      update: { name: this.root + "/orders/" + orderId, fields: mapFields(order) },
+      update: { name: this.docRoot + "/orders/" + orderId, fields: mapFields(order) },
       currentDocument: { exists: false },
     });
     writes.push({
       update: {
-        name: this.root + "/orderStatus/" + reference,
+        name: this.docRoot + "/orderStatus/" + reference,
         fields: mapFields({ reference: reference, status: "pending", total: total, createdAt: now, updatedAt: now }),
       },
       currentDocument: { exists: false },

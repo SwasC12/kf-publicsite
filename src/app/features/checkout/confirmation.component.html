@@ -8,16 +8,23 @@
         </div>
 
         <div class="ref-box">
-          <span class="ref-label">Your payment reference</span>
+          <span class="ref-label">{{ o.paymentMethod === 'yoco' ? 'Your order reference' : 'Your payment reference' }}</span>
           <div class="ref-value">
             <strong>{{ o.reference }}</strong>
             <button class="icon-btn" title="Copy reference" (click)="copy(o.reference)">
               <app-icon [name]="copied() ? 'check' : 'copy'" [size]="18" />
             </button>
           </div>
-          <span class="ref-hint">Use this reference on your EFT so we can match your payment.</span>
+          <span class="ref-hint">{{ o.paymentMethod === 'yoco' ? "We're confirming your card payment with Yoco. We'll email you as soon as it clears." : 'Use this reference on your EFT so we can match your payment.' }}</span>
         </div>
 
+        @if (o.paymentMethod === 'yoco') {
+          <div class="pay-card">
+            <h2>Card payment</h2>
+            <p>Your payment is being confirmed securely by <strong>Yoco</strong>. No card details are stored on our site.</p>
+            <p class="pay-note">You'll receive an email from us once the payment is confirmed. If Yoco shows a failure, you can retry from your cart.</p>
+          </div>
+        } @else {
         <div class="pay-card">
           <h2>Pay by EFT</h2>
           <p>Please transfer <strong>{{ price(o.total) }}</strong> to:</p>
@@ -35,6 +42,7 @@
             or call {{ bank.contactPhone }}.
           </p>
         </div>
+        }
 
         <div class="order-summary standalone">
           <h2>What you ordered</h2>

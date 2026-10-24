@@ -40,7 +40,11 @@ export class SettingsService {
           if (snap.exists()) {
             const s = { ...DEFAULTS, ...(snap.data() as StoreSettings) };
             this.settings.set(s);
-            setPlaceholderOverrides(s.placeholderMen, s.placeholderWomen);
+            setPlaceholderOverrides(
+              s.placeholderMen, s.placeholderWomen,
+              s.placeholderMen30, s.placeholderMen50, s.placeholderMen100,
+              s.placeholderWomen30, s.placeholderWomen50, s.placeholderWomen100,
+            );
           }
         },
         () => {},
