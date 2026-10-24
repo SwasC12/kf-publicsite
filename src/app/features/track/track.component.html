@@ -1,0 +1,42 @@
+
+    <div class="track reveal">
+      <h1 class="page-title">Track your order</h1>
+      <p class="auth-sub">Enter your order reference and the email address used on the order.</p>
+      <form class="track-form" (ngSubmit)="lookup()">
+        <input type="text" [(ngModel)]="ref" name="ref" placeholder="KF-XXXXX" autocomplete="off" autocapitalize="characters" />
+        <input type="email" [(ngModel)]="email" name="email" placeholder="you@email.com" autocomplete="email" />
+        <button type="submit" class="btn primary" [disabled]="busy() || !ref.trim() || !email.trim()">{{ busy() ? 'Checking…' : 'Track' }}</button>
+      </form>
+
+      @if (notFound()) { <div class="notice error">No order found with that reference. Check the code and try again.</div> }
+
+      @if (result(); as r) {
+        <div class="track-result">
+          <div class="track-head">
+            <span class="hist-ref">{{ r.reference }}</span>
+            <span class="status-pill" [attr.data-status]="r.status">{{ r.status === 'fulfilled' || r.status === 'shipped' ? 'on its way' : r.status }}</span>
+          </div>
+          @if (r.status === 'cancelled') {
+            <p>This order was cancelled. If that's unexpected, please <a routerLink="/contact">contact us</a>.</p>
+          } @else {
+            <ol class="track-steps">
+              @for (s of steps; track s; let i = $index) {
+                <li [class.done]="stepIndex(r.status) >= i" [class.current]="stepIndex(r.status) === i">
+                  <span class="tick">@if (stepIndex(r.status) >= i) { <app-icon name="check" [size]="14" /> }</span>
+                  {{ label(s) }}
+                </li>
+              }
+            </ol>
+          }
+          <p class="track-total">Order total: <strong>{{ price(r.total) }}</strong></p>
+          @if (r.courier || r.trackingNumber) {
+            <div class="track-courier">
+              <span class="track-courier-label">Courier</span>
+              <strong>{{ r.courier || 'Courier' }}</strong>
+              @if (r.trackingNumber) { <span class="track-courier-no">{{ r.trackingNumber }}</span> }
+            </div>
+          }
+        </div>
+      }
+    </div>
+  

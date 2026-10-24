@@ -1,14 +1,14 @@
 import { Routes } from '@angular/router';
-import { ShopComponent } from './shop.component';
-import { ProductComponent } from './product.component';
-import { CartComponent } from './cart.component';
-import { CheckoutComponent } from './checkout.component';
-import { ConfirmationComponent } from './confirmation.component';
-import { AccountComponent } from './account.component';
-import { TrackComponent } from './track.component';
-import { SavedComponent } from './saved.component';
-import { AboutComponent, ShippingComponent, FaqComponent, ContactComponent, TermsComponent, PrivacyComponent } from './pages.component';
-import { ResetPasswordComponent } from './reset-password.component';
+import { ShopComponent } from '@features/shop/shop.component';
+import { ProductComponent } from '@features/product/product.component';
+import { CartComponent } from '@features/cart/cart.component';
+import { CheckoutComponent } from '@features/checkout/checkout.component';
+import { ConfirmationComponent } from '@features/checkout/confirmation.component';
+import { AccountComponent } from '@features/account/account.component';
+import { TrackComponent } from '@features/track/track.component';
+import { SavedComponent } from '@features/saved/saved.component';
+import { AboutComponent, ShippingComponent, FaqComponent, ContactComponent, TermsComponent, PrivacyComponent } from '@features/pages';
+import { ResetPasswordComponent } from '@features/account/reset-password.component';
 
 export const routes: Routes = [
   { path: '', component: ShopComponent, title: 'Kauā Fragrances' },
