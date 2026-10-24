@@ -3,6 +3,62 @@ export function formatPrice(v: number | null | undefined): string {
   return 'R' + Number(v).toFixed(2).replace(/\.00$/, '');
 }
 
+import { Product, ProductSize, ProductSizeKey, PRODUCT_SIZE_KEYS } from './models';
+
+export interface SizeOption { key: ProductSizeKey; size: ProductSize; }
+
+export function sizeOptions(p: Product): SizeOption[] {
+  const out: SizeOption[] = [];
+  if (p.sizes) {
+    for (const key of PRODUCT_SIZE_KEYS) {
+      const size = p.sizes[key];
+      if (size && Number(size.price) > 0) out.push({ key, size });
+    }
+  }
+  if (out.length) return out;
+  if (Number(p.price) > 0) {
+    out.push({
+      key: 'size30',
+      size: {
+        size: p.size || 'Default',
+        price: p.price,
+        salePrice: p.salePrice,
+        cost: p.cost,
+        stockQty: p.stockQty,
+        inStock: p.inStock,
+        imageUrl: p.imageUrl,
+      },
+    });
+  }
+  return out;
+}
+
+export function sizeEffectivePrice(s: ProductSize): number {
+  return s.salePrice != null && Number(s.salePrice) > 0 && Number(s.salePrice) < Number(s.price)
+    ? Number(s.salePrice) : Number(s.price) || 0;
+}
+
+export function sizeOnSale(s: ProductSize): boolean {
+  return s.salePrice != null && Number(s.salePrice) > 0 && Number(s.salePrice) < Number(s.price);
+}
+
+export function fromPrice(p: Product): number {
+  const opts = sizeOptions(p);
+  return opts.length ? Math.min(...opts.map((o) => sizeEffectivePrice(o.size))) : Number(p.price) || 0;
+}
+
+export function defaultSizeKey(p: Product): ProductSizeKey | undefined {
+  return sizeOptions(p)[0]?.key;
+}
+
+export function sizeImage(p: Product, s: ProductSize): string {
+  return optimizedImage(s.imageUrl || p.imageUrl, 900) || placeholderFor(p.gender);
+}
+
+export function sizeAvailable(s: ProductSize): boolean {
+  return !!s.inStock && (s.stockQty == null || Number(s.stockQty) > 0);
+}
+
 export const SA_PROVINCES = [
   'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo',
   'Mpumalanga', 'Northern Cape', 'North West', 'Western Cape',

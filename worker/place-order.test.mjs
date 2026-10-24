@@ -14,6 +14,14 @@ const sa = JSON.stringify({ project_id: 'test-project', client_email: 'svc@test.
 const products = {
   p1: { name: { stringValue: 'Olympea' }, price: { integerValue: '100' }, stockQty: { integerValue: '5' }, inStock: { booleanValue: true }, active: { booleanValue: true }, size: { stringValue: '50ml' } },
   p2: { name: { stringValue: 'Chloe' }, price: { integerValue: '50' }, stockQty: { integerValue: '1' }, inStock: { booleanValue: true }, active: { booleanValue: true } },
+  p3: {
+    name: { stringValue: 'Sized Scent' }, price: { integerValue: '100' }, inStock: { booleanValue: true }, active: { booleanValue: true },
+    sizes: { mapValue: { fields: {
+      size30: { mapValue: { fields: { size: { stringValue: '30ml' }, price: { integerValue: '100' }, stockQty: { integerValue: '5' }, inStock: { booleanValue: true } } } },
+      size50: { mapValue: { fields: { size: { stringValue: '50ml' }, price: { integerValue: '150' }, stockQty: { integerValue: '2' }, inStock: { booleanValue: true } } } },
+      size100: { mapValue: { fields: { size: { stringValue: '100ml' }, price: { integerValue: '250' }, stockQty: { integerValue: '1' }, inStock: { booleanValue: true } } } },
+    } } },
+  },
 };
 const settings = {
   deliveryFee: { integerValue: '60' },
@@ -38,6 +46,7 @@ globalThis.fetch = async function (input, opts) {
   if (url.includes('/settings/store')) return json({ name: 'settings/store', updateTime: 't1', fields: settings });
   if (url.includes('/products/p1')) return json({ name: 'products/p1', updateTime: 't1', fields: products.p1 });
   if (url.includes('/products/p2')) return json({ name: 'products/p2', updateTime: 't1', fields: products.p2 });
+  if (url.includes('/products/p3')) return json({ name: 'products/p3', updateTime: 't1', fields: products.p3 });
   if (url.includes('/discounts/SAVE10')) return json({ name: 'discounts/SAVE10', updateTime: 't1', fields: discount });
   if (url.includes('/discounts/')) return json({ error: { code: 404, message: 'not found', status: 'NOT_FOUND' } }, 404);
   if (url.includes('/orderStatus/')) return json({ error: { code: 404, message: 'not found', status: 'NOT_FOUND' } }, 404);
@@ -96,6 +105,33 @@ check('stock write 5-2=3', !!lastCommit && lastCommit.writes.some((w) => w.updat
 check('discount deferred until paid', !!lastCommit && !lastCommit.writes.some((w) => w.update && w.update.fields && w.update.fields.usedCount));
 check('stock reserved on order', data.order && data.order.stockReserved === true);
 check('two emails sent', calls.filter((c) => c.url.includes('api.resend.com')).length === 2);
+
+// 1b. A sized product prices and decrements the selected size.
+calls = []; lastCommit = null;
+res = await worker.fetch(request('/api/place-order', {
+  contact: { name: 'Test Buyer', email: 'buyer@example.com', phone: '0821234567' },
+  delivery: { line1: '1 Main St', city: 'Cape Town' },
+  deliveryMethod: 'delivery',
+  items: [{ productId: 'p3', sizeKey: 'size50', qty: 2, price: 1 }],
+}), env);
+data = await res.json();
+check('sized order 200', res.status === 200, data);
+check('sized total 360', data.order && data.order.total === 360, data.order && data.order.total);
+check('sized item price 150', data.order && data.order.items[0].price === 150);
+check('sized item label 50ml', data.order && data.order.items[0].size === '50ml');
+const sizeWrite = lastCommit && lastCommit.writes.find((w) => w.update && w.update.fields && w.update.fields.sizes);
+check('size stock write 2-2=0', !!sizeWrite && sizeWrite.update.fields.sizes.mapValue.fields.size50.mapValue.fields.stockQty.integerValue === '0');
+check('other size stock untouched', !!sizeWrite && sizeWrite.update.fields.sizes.mapValue.fields.size30.mapValue.fields.stockQty.integerValue === '5');
+
+// 1c. Selecting a size with insufficient stock is rejected.
+res = await worker.fetch(request('/api/place-order', {
+  contact: { name: 'Test Buyer', email: 'buyer@example.com', phone: '0821234567' },
+  delivery: { line1: '1 Main St', city: 'Cape Town' },
+  deliveryMethod: 'delivery',
+  items: [{ productId: 'p3', sizeKey: 'size100', qty: 2 }],
+}), env);
+data = await res.json();
+check('size stock rejection 400', res.status === 400 && /Only 1/.test(data.error || ''), data);
 
 // 2. Insufficient stock is rejected.
 res = await worker.fetch(request('/api/place-order', {

@@ -42,7 +42,7 @@ export class OrdersService {
           contact,
           delivery,
           deliveryMethod,
-          items: items.map((i) => ({ productId: i.productId, qty: i.qty })),
+          items: items.map((i) => ({ productId: i.productId, sizeKey: i.sizeKey || '', qty: i.qty })),
           discountCode: discountCode || '',
         }),
       });

@@ -20,7 +20,7 @@ import { formatPrice } from './util';
       </div>
     } @else {
       <div class="cart-list">
-        @for (i of cart.items(); track i.productId) {
+        @for (i of cart.items(); track i.productId + '|' + (i.sizeKey || '')) {
           <div class="cart-row">
             <div class="cart-thumb">
               @if (i.imageUrl) { <img [src]="i.imageUrl" [alt]="i.name" (error)="imgErr($event)" /> }
@@ -32,12 +32,12 @@ import { formatPrice } from './util';
               <span class="cart-price">{{ price(i.price) }}</span>
             </div>
             <div class="qty-row small">
-              <button class="qbtn" (click)="cart.setQty(i.productId, i.qty - 1)" [attr.aria-label]="'Decrease quantity of ' + i.name"><app-icon name="minus" [size]="14" /></button>
+              <button class="qbtn" (click)="cart.setQty(i.productId, i.qty - 1, i.sizeKey)" [attr.aria-label]="'Decrease quantity of ' + i.name"><app-icon name="minus" [size]="14" /></button>
               <span class="qval">{{ i.qty }}</span>
-              <button class="qbtn" (click)="cart.setQty(i.productId, i.qty + 1)" [attr.aria-label]="'Increase quantity of ' + i.name"><app-icon name="plus" [size]="14" /></button>
+              <button class="qbtn" (click)="cart.setQty(i.productId, i.qty + 1, i.sizeKey)" [attr.aria-label]="'Increase quantity of ' + i.name"><app-icon name="plus" [size]="14" /></button>
             </div>
             <div class="cart-line-total">{{ price(i.price * i.qty) }}</div>
-            <button class="icon-btn" title="Remove" [attr.aria-label]="'Remove ' + i.name" (click)="cart.remove(i.productId)"><app-icon name="trash" [size]="17" /></button>
+            <button class="icon-btn" title="Remove" [attr.aria-label]="'Remove ' + i.name" (click)="cart.remove(i.productId, i.sizeKey)"><app-icon name="trash" [size]="17" /></button>
           </div>
         }
       </div>

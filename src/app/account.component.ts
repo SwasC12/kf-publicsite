@@ -1,7 +1,7 @@
 import { Component, effect, inject, signal } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from './auth.service';
 import { CustomerService } from './customer.service';
 import { EmailService } from './email.service';
@@ -109,6 +109,8 @@ export class AccountComponent {
   readonly auth = inject(AuthService);
   readonly cust = inject(CustomerService);
   private emailSvc = inject(EmailService);
+  private router = inject(Router);
+  private route = inject(ActivatedRoute);
 
   readonly mode = signal<'in' | 'up'>('in');
   readonly showPw = signal(false);
@@ -152,11 +154,20 @@ export class AccountComponent {
 
   async submit(): Promise<void> {
     if (this.mode() === 'in') {
-      await this.auth.signIn(this.email, this.password);
+      const ok = await this.auth.signIn(this.email, this.password);
+      if (ok) this.afterAuth();
     } else {
       const ok = await this.auth.signUp(this.name, this.email, this.password);
-      if (ok) this.emailSvc.welcome(this.email.trim(), this.name.trim());
+      if (ok) {
+        this.emailSvc.welcome(this.email.trim(), this.name.trim());
+        this.afterAuth();
+      }
     }
+  }
+
+  private afterAuth(): void {
+    const back = this.route.snapshot.queryParamMap.get('return');
+    if (back && back.startsWith('/')) this.router.navigateByUrl(back);
   }
 
   onSame(): void { if (this.sameAsBilling) this.delivery = { ...this.billing }; }

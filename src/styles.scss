@@ -415,6 +415,8 @@ a { color: inherit; }
 .status-pill[data-status="pending"] { background: #f7e5d4; color: #7a3d12; }
 .status-pill[data-status="paid"] { background: #e2ecfa; color: #1d4f91; }
 .status-pill[data-status="fulfilled"] { background: #e2f2e7; color: #205c36; }
+.status-pill[data-status="shipped"] { background: #efe4d3; color: #6b4e2a; }
+.status-pill[data-status="delivered"] { background: #e2f2e7; color: #205c36; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 720px) {

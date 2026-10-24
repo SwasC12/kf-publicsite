@@ -39,8 +39,14 @@ export default {
       if (request.method !== "POST") return cors(json({ error: "Method not allowed" }, 405), request);
       if (url.pathname === "/api/place-order") return cors(await handlePlaceOrder(request, env), request);
       if (url.pathname === "/api/validate-promo") return cors(await handleValidatePromo(request, env), request);
+      if (url.pathname === "/api/lookup-order") return cors(await handleLookupOrder(request, env), request);
+      if (url.pathname === "/api/request-password-reset") return cors(await handleRequestPasswordReset(request, env), request);
+      if (url.pathname === "/api/reset-password") return cors(await handleResetPassword(request, env), request);
       if (url.pathname === "/api/send-email") return cors(await handleSend(request, env), request);
       return cors(json({ error: "Not found" }, 404), request);
+    }
+    if (url.pathname === "/sitemap.xml") {
+      try { return withSecurityHeaders(await handleSitemap(env)); } catch (e) { /* fall back to static */ }
     }
     return withSecurityHeaders(await env.ASSETS.fetch(request));
   },
@@ -164,9 +170,12 @@ async function handleSend(request, env) {
     // Order-status mail is an admin action, never a public one.
     if (!(await adminAuthorized(request, env))) return json({ error: "Forbidden" }, 403);
     const ref = clip(body.reference, 20) || "KF-";
-    const st = body.status === "fulfilled" ? "fulfilled" : "paid";
+    const st = body.status === "delivered" ? "delivered"
+      : (body.status === "shipped" || body.status === "fulfilled") ? "shipped"
+      : "paid";
     const subject = st === "paid"
-      ? "Payment received — order " + ref : "Your order " + ref + " is on its way";
+      ? "Payment received — order " + ref
+      : st === "delivered" ? "Order " + ref + " delivered" : "Your order " + ref + " is on its way";
     try {
       await sendEmail(env, { from: FROM_ORDERS, to, replyTo: "orders@kauafragrances.co.za",
         subject: subject, html: statusHtml(name, ref, st, Number(body.total) || 0,
@@ -195,6 +204,137 @@ function round2(n) {
 
 function sleep(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
+async function handleRequestPasswordReset(request, env) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT || !env.RESEND_API_KEY) {
+    return json({ error: "Password reset is temporarily unavailable." }, 503);
+  }
+  if (!rateLimit("pwreq:" + clientIp(request), 5, 3600000)) {
+    return json({ error: "Too many reset requests. Please try again later." }, 429);
+  }
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Bad request" }, 400); }
+  const email = String(body.email || "").trim().toLowerCase().slice(0, 200);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return json({ ok: true });
+  }
+  // Never reveal whether an account exists. Rate-limit per email quietly.
+  if (!rateLimit("pwemail:" + email, 3, 3600000)) return json({ ok: true });
+  try {
+    const fs = new Firestore(env);
+    const user = await fs.getUserByEmail(email);
+    if (!user || !user.localId) return json({ ok: true });
+
+    const token = randomTokenHex(32);
+    const hash = await sha256Hex(token);
+    await fs.patch("passwordResets/" + hash, {
+      uid: user.localId,
+      email: email,
+      expiresAt: Date.now() + 30 * 60 * 1000,
+      used: false,
+      createdAt: Date.now(),
+    });
+    const link = SITE_URL + "/reset-password?token=" + token;
+    await sendEmail(env, {
+      from: FROM_HELLO,
+      to: email,
+      replyTo: "hello@kauafragrances.co.za",
+      subject: "Reset your Kauā Fragrances password",
+      html: resetHtml(link),
+    });
+    return json({ ok: true });
+  } catch (e) {
+    return json({ ok: true });
+  }
+}
+
+async function handleResetPassword(request, env) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT) {
+    return json({ error: "Password reset is temporarily unavailable." }, 503);
+  }
+  if (!rateLimit("pwreset:" + clientIp(request), 10, 60000)) {
+    return json({ error: "Too many attempts. Please wait a minute." }, 429);
+  }
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Bad request" }, 400); }
+  const token = String(body.token || "").trim().toLowerCase();
+  const password = String(body.password || "");
+  if (!/^[a-f0-9]{64}$/.test(token)) {
+    return json({ error: "That reset link is invalid or has expired." }, 400);
+  }
+  if (password.length < 8 || password.length > 100) {
+    return json({ error: "Choose a password of at least 8 characters." }, 400);
+  }
+  try {
+    const fs = new Firestore(env);
+    const hash = await sha256Hex(token);
+    const doc = await fs.get("passwordResets/" + hash);
+    if (!doc) return json({ error: "That reset link is invalid or has expired." }, 400);
+    const reset = doc.data;
+    if (reset.used === true || Number(reset.expiresAt || 0) < Date.now() || !reset.uid) {
+      return json({ error: "That reset link is invalid or has expired." }, 400);
+    }
+    await fs.updatePassword(reset.uid, password);
+    await fs.patch("passwordResets/" + hash, { used: true, usedAt: Date.now() });
+    return json({ ok: true });
+  } catch (e) {
+    if (e && e.status === 400) return json({ error: "That reset link is invalid or has expired." }, 400);
+    return json({ error: "Could not reset the password. Please request a new link." }, 500);
+  }
+}
+
+function randomTokenHex(bytes) {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  let out = "";
+  for (let i = 0; i < buf.length; i++) out += buf[i].toString(16).padStart(2, "0");
+  return out;
+}
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  const bytes = new Uint8Array(buf);
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, "0");
+  return out;
+}
+
+async function handleLookupOrder(request, env) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT) return json({ error: "Order lookup is temporarily unavailable." }, 503);
+  if (!rateLimit("lookup:" + clientIp(request), 20, 60000)) {
+    return json({ error: "Too many lookups. Please wait a minute." }, 429);
+  }
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Bad request" }, 400); }
+  const reference = String(body.reference || "").trim().toUpperCase().slice(0, 20);
+  const email = String(body.email || "").trim().toLowerCase().slice(0, 200);
+  if (!reference || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return json({ error: "Enter your order reference and the email used on the order." }, 400);
+  }
+  try {
+    const fs = new Firestore(env);
+    const orders = await fs.query("orders", "reference", "EQUAL", reference, 5);
+    const order = orders.find(function (o) {
+      return String((o.customer && o.customer.email) || "").toLowerCase() === email;
+    });
+    if (!order) return json({ error: "No order found with that reference and email." }, 404);
+    return json({
+      ok: true,
+      order: {
+        reference: order.reference,
+        status: order.status,
+        total: order.total,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        paidAt: order.paidAt || null,
+        courier: order.courier || null,
+        trackingNumber: order.trackingNumber || null,
+      },
+    });
+  } catch (e) {
+    return json({ error: "Could not look up that order. Please try again." }, 500);
+  }
 }
 
 async function handleValidatePromo(request, env) {
@@ -226,7 +366,19 @@ async function handleValidatePromo(request, env) {
       }
       const doc = await fs.get("products/" + productId);
       if (!doc) return json({ error: "One of the items in your cart is no longer available." }, 400);
-      lines.push({ unitPrice: effectivePrice(doc.data), qty: qty });
+      const p = doc.data;
+      const opts = p.sizes && typeof p.sizes === "object" ? p.sizes : null;
+      let unit = effectivePrice(p);
+      if (opts) {
+        const key = ["size30", "size50", "size100"].indexOf(String(raw.sizeKey || "")) >= 0
+          ? String(raw.sizeKey) : "size30";
+        const s = opts[key];
+        if (!s || !(Number(s.price) > 0)) {
+          return json({ error: "One of the selected sizes is no longer available." }, 400);
+        }
+        unit = sizePrice(s);
+      }
+      lines.push({ unitPrice: unit, qty: qty });
     }
     const doc = await fs.get("discounts/" + code);
     if (!doc) return json({ error: "That code is not valid." }, 400);
@@ -275,7 +427,7 @@ async function handlePlaceOrder(request, env) {
     if (!productId || !isFinite(qty) || qty < 1 || qty > 99) {
       return json({ error: "One of the cart items is invalid." }, 400);
     }
-    items.push({ productId: productId, qty: qty });
+    items.push({ productId: productId, sizeKey: String(raw.sizeKey || "").trim(), qty: qty });
   }
 
   let uid = null;
@@ -341,7 +493,7 @@ class Firestore {
     const enc = function (obj) { return b64url(new TextEncoder().encode(JSON.stringify(obj))); };
     const unsigned = enc({ alg: "RS256", typ: "JWT" }) + "." + enc({
       iss: this.sa.client_email,
-      scope: "https://www.googleapis.com/auth/datastore",
+      scope: "https://www.googleapis.com/auth/cloud-platform",
       aud: "https://oauth2.googleapis.com/token",
       iat: now,
       exp: now + 3600,
@@ -399,6 +551,27 @@ class Firestore {
 
   async commit(tx, writes) {
     await this.call(":commit", { method: "POST", body: { transaction: tx, writes: writes } });
+  }
+
+  async idToolkit(path, body) {
+    const access = await this.accessToken();
+    const res = await fetch("https://identitytoolkit.googleapis.com/v1/projects/" + this.project + "/" + path, {
+      method: "POST",
+      headers: { Authorization: "Bear" + "er " + access, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(function () { return {}; });
+    if (!res.ok) throw httpError(res.status === 400 ? 400 : 503, "Account service unavailable.");
+    return data;
+  }
+
+  async getUserByEmail(email) {
+    const data = await this.idToolkit("accounts:lookup", { email: [email] });
+    return data && data.users && data.users[0] ? data.users[0] : null;
+  }
+
+  async updatePassword(uid, password) {
+    await this.idToolkit("accounts:update", { localId: uid, password: password });
   }
 
   /** Run a simple equality query and return { id, ...fields } documents. */
@@ -465,21 +638,43 @@ class Firestore {
     }
 
     const rows = [];
+    const sizeKeys = ["size30", "size50", "size100"];
     for (const line of input.items) {
       const doc = await this.get("products/" + line.productId, tx);
       if (!doc) throw httpError(400, "One of the items in your cart is no longer available.");
       const p = doc.data;
       if (p.active !== true) throw httpError(400, (p.name || "An item") + " is no longer available.");
-      if (p.inStock === false) throw httpError(400, (p.name || "An item") + " is sold out.");
-      const stock = p.stockQty == null ? null : Number(p.stockQty);
+
+      const sizes = p.sizes && typeof p.sizes === "object" ? p.sizes : null;
+      let sizeKey = null;
+      let chosen = null;
+      let unit = 0;
+      let stock = null;
+      let label = p.name || "An item";
+
+      if (sizes) {
+        sizeKey = sizeKeys.indexOf(String(line.sizeKey || "")) >= 0 ? String(line.sizeKey) : "size30";
+        chosen = sizes[sizeKey];
+        if (!chosen || !(Number(chosen.price) > 0)) {
+          throw httpError(400, label + " is not available in that size.");
+        }
+        label = label + " (" + (chosen.size || sizeKey) + ")";
+        if (chosen.inStock === false) throw httpError(400, label + " is sold out.");
+        stock = chosen.stockQty == null ? null : Number(chosen.stockQty);
+        unit = sizePrice(chosen);
+      } else {
+        if (p.inStock === false) throw httpError(400, label + " is sold out.");
+        stock = p.stockQty == null ? null : Number(p.stockQty);
+        unit = effectivePrice(p);
+      }
+
       if (stock != null && line.qty > stock) {
         throw httpError(400, stock <= 0
-          ? (p.name || "An item") + " is sold out."
-          : "Only " + stock + " of " + (p.name || "that item") + " left.");
+          ? label + " is sold out."
+          : "Only " + stock + " of " + label + " left.");
       }
-      const unit = effectivePrice(p);
-      if (!(unit > 0)) throw httpError(400, (p.name || "An item") + " is not available for online checkout right now.");
-      rows.push({ line: line, product: p, doc: doc, unitPrice: unit });
+      if (!(unit > 0)) throw httpError(400, label + " is not available for online checkout right now.");
+      rows.push({ line: line, product: p, doc: doc, sizeKey: sizeKey, size: chosen, unitPrice: unit });
     }
 
     const subtotal = round2(rows.reduce(function (sum, r) { return sum + r.unitPrice * r.line.qty; }, 0));
@@ -527,8 +722,9 @@ class Firestore {
       items: rows.map(function (r) {
         return {
           productId: r.line.productId,
+          sizeKey: r.sizeKey || undefined,
           name: r.product.name,
-          size: r.product.size || undefined,
+          size: r.size ? r.size.size : (r.product.size || undefined),
           price: r.unitPrice,
           qty: r.line.qty,
         };
@@ -545,16 +741,53 @@ class Firestore {
     };
 
     const writes = [];
+    const byProduct = new Map();
     for (const r of rows) {
-      if (r.product.stockQty == null) continue;
-      const nextStock = Number(r.product.stockQty) - r.line.qty;
-      const fields = { stockQty: toFs(nextStock) };
-      if (nextStock <= 0) fields.inStock = toFs(false);
-      writes.push({
-        update: { name: r.doc.name, fields: fields },
-        updateMask: { fieldPaths: Object.keys(fields) },
-        currentDocument: { updateTime: r.doc.updateTime },
-      });
+      let entry = byProduct.get(r.line.productId);
+      if (!entry) {
+        entry = {
+          product: r.product,
+          doc: r.doc,
+          sizes: r.product.sizes ? JSON.parse(JSON.stringify(r.product.sizes)) : null,
+          sizeQty: {},
+          legacyQty: 0,
+        };
+        byProduct.set(r.line.productId, entry);
+      }
+      if (entry.sizes && r.sizeKey) {
+        entry.sizeQty[r.sizeKey] = (entry.sizeQty[r.sizeKey] || 0) + r.line.qty;
+      } else {
+        entry.legacyQty += r.line.qty;
+      }
+    }
+    for (const entry of byProduct.values()) {
+      if (entry.sizes) {
+        let changed = false;
+        for (const key of Object.keys(entry.sizeQty)) {
+          const size = entry.sizes[key];
+          if (!size || size.stockQty == null) continue;
+          const next = Math.max(0, Number(size.stockQty) - entry.sizeQty[key]);
+          size.stockQty = next;
+          if (next <= 0) size.inStock = false;
+          changed = true;
+        }
+        if (changed) {
+          writes.push({
+            update: { name: entry.doc.name, fields: { sizes: toFs(entry.sizes) } },
+            updateMask: { fieldPaths: ["sizes"] },
+            currentDocument: { updateTime: entry.doc.updateTime },
+          });
+        }
+      } else if (entry.product.stockQty != null) {
+        const nextStock = Math.max(0, Number(entry.product.stockQty) - entry.legacyQty);
+        const fields = { stockQty: toFs(nextStock) };
+        if (nextStock <= 0) fields.inStock = toFs(false);
+        writes.push({
+          update: { name: entry.doc.name, fields: fields },
+          updateMask: { fieldPaths: Object.keys(fields) },
+          currentDocument: { updateTime: entry.doc.updateTime },
+        });
+      }
     }
     writes.push({
       update: { name: this.root + "/orders/" + orderId, fields: mapFields(order) },
@@ -572,6 +805,43 @@ class Firestore {
   }
 }
 
+async function handleSitemap(env) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT) throw new Error("not configured");
+  const fs = new Firestore(env);
+  const products = await fs.query("products", "active", "EQUAL", true, 500);
+  const urls = [
+    { loc: "https://kauafragrances.co.za/", priority: "1.0" },
+    { loc: "https://kauafragrances.co.za/about", priority: "0.6" },
+    { loc: "https://kauafragrances.co.za/shipping", priority: "0.6" },
+    { loc: "https://kauafragrances.co.za/faq", priority: "0.6" },
+    { loc: "https://kauafragrances.co.za/contact", priority: "0.6" },
+    { loc: "https://kauafragrances.co.za/track", priority: "0.5" },
+  ];
+  for (const p of products) {
+    if (!p.id) continue;
+    const last = p.updatedAt ? new Date(Number(p.updatedAt)).toISOString() : null;
+    urls.push({ loc: "https://kauafragrances.co.za/product/" + encodeURIComponent(p.id), priority: "0.8", lastmod: last });
+  }
+  const body = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+    urls.map(function (u) {
+      return "  <url><loc>" + escapeXml(u.loc) + "</loc>" +
+        (u.lastmod ? "<lastmod>" + u.lastmod + "</lastmod>" : "") +
+        "<priority>" + u.priority + "</priority></url>";
+    }).join("\n") +
+    "\n</urlset>";
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+  });
+}
+
+function escapeXml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c];
+  });
+}
+
 async function expireUnpaidOrders(env) {
   if (!env.FIREBASE_SERVICE_ACCOUNT) return;
   const fs = new Firestore(env);
@@ -585,11 +855,19 @@ async function expireUnpaidOrders(env) {
     for (const item of order.items || []) {
       try {
         const doc = await fs.get("products/" + item.productId);
-        if (!doc || doc.data.stockQty == null) continue;
-        await fs.patch("products/" + item.productId, {
-          stockQty: Number(doc.data.stockQty) + Number(item.qty),
-          inStock: true,
-        });
+        if (!doc) continue;
+        if (item.sizeKey && doc.data.sizes && doc.data.sizes[item.sizeKey]) {
+          const sizes = JSON.parse(JSON.stringify(doc.data.sizes));
+          const size = sizes[item.sizeKey];
+          if (size.stockQty != null) size.stockQty = Number(size.stockQty) + Number(item.qty);
+          size.inStock = true;
+          await fs.patch("products/" + item.productId, { sizes: sizes });
+        } else if (doc.data.stockQty != null) {
+          await fs.patch("products/" + item.productId, {
+            stockQty: Number(doc.data.stockQty) + Number(item.qty),
+            inStock: true,
+          });
+        }
       } catch (e) { /* keep going */ }
     }
     try {
@@ -612,6 +890,11 @@ function refCode(length) {
   let out = "";
   for (let i = 0; i < length; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
+}
+
+function sizePrice(s) {
+  const sale = Number(s && s.salePrice);
+  return sale > 0 && sale < Number(s.price) ? sale : Number(s.price) || 0;
 }
 
 function effectivePrice(p) {
@@ -861,12 +1144,29 @@ function statusHtml(name, reference, status, total, courier, trackingNumber) {
       ${trackBlock}
       <p style="margin-top:18px">${BTN(SITE_URL + '/track', 'Track order')}</p>`);
   }
+  if (status === 'delivered') {
+    return shell(`
+      <h1 style="font-size:22px;margin:0 0 8px">Delivered 🖤</h1>
+      <p style="line-height:1.6;color:#3b352f">Good news, ${esc(name)} — order <strong>${esc(reference)}</strong> has been delivered.
+        We hope you love it. One spray to last the day.</p>
+      ${trackBlock}
+      <p style="margin-top:18px">${BTN(SITE_URL + '/track', 'View order')}</p>`);
+  }
   return shell(`
     <h1 style="font-size:22px;margin:0 0 8px">Your order is on its way 🖤</h1>
     <p style="line-height:1.6;color:#3b352f">Good news, ${esc(name)} — order <strong>${esc(reference)}</strong> has been dispatched.
       Thank you for choosing Kauā Fragrances. One spray to last the day.</p>
     ${trackBlock}
     <p style="margin-top:18px">${BTN(SITE_URL + '/track', 'Track order')}</p>`);
+}
+
+function resetHtml(link) {
+  return shell(`
+    <h1 style="font-size:22px;margin:0 0 10px">Reset your password</h1>
+    <p style="line-height:1.6;color:#3b352f">We received a request to reset the password for your Kauā Fragrances account.
+      Click the button below to choose a new password. This link expires in 30 minutes and can only be used once.</p>
+    <p style="margin:20px 0">${BTN(link, 'Choose a new password')}</p>
+    <p style="line-height:1.6;color:#7d766c;font-size:13px">If you didn't request this, you can ignore this email — your password won't change.</p>`);
 }
 
 function welcomeHtml(name) {

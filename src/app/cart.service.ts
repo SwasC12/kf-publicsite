@@ -1,6 +1,6 @@
 import { Injectable, computed, effect, signal } from '@angular/core';
-import { CartItem, Product, effectivePrice } from './models';
-import { productImage } from './util';
+import { CartItem, Product, ProductSizeKey, effectivePrice } from './models';
+import { productImage, sizeEffectivePrice, sizeImage, sizeOptions } from './util';
 
 const KEY = 'kf.cart.v1';
 
@@ -13,35 +13,47 @@ export class CartService {
   /** Signals the most recently added product (for the "added to cart" toast). */
   readonly lastAdd = signal<{ name: string; at: number } | null>(null);
 
-  qtyOf(productId: string): number {
-    return this.items().find((i) => i.productId === productId)?.qty ?? 0;
+  qtyOf(productId: string, sizeKey?: ProductSizeKey): number {
+    return this.items().find((i) => i.productId === productId && (i.sizeKey || undefined) === (sizeKey || undefined))?.qty ?? 0;
   }
 
   constructor() {
     effect(() => this.write(this.items()));
   }
 
-  add(p: Product, qty = 1): void {
+  add(p: Product, qty = 1, sizeKey?: ProductSizeKey): void {
+    const opts = sizeOptions(p);
+    const chosen = opts.find((o) => o.key === sizeKey) || opts[0];
+    const key = chosen?.key;
+    const size = chosen?.size.size || p.size;
+    const price = chosen ? sizeEffectivePrice(chosen.size) : effectivePrice(p);
+    const imageUrl = chosen ? sizeImage(p, chosen.size) : productImage(p);
     this.items.update((list) => {
-      const existing = list.find((i) => i.productId === p.id);
+      const existing = list.find((i) => i.productId === p.id && (i.sizeKey || undefined) === (key || undefined));
       if (existing) {
-        return list.map((i) => (i.productId === p.id ? { ...i, qty: i.qty + qty } : i));
+        return list.map((i) =>
+          i === existing ? { ...i, qty: i.qty + qty } : i,
+        );
       }
       return [
         ...list,
-        { productId: p.id, name: p.name, size: p.size, price: effectivePrice(p), imageUrl: productImage(p), qty },
+        { productId: p.id, sizeKey: key, name: p.name, size, price, imageUrl, qty },
       ];
     });
     this.lastAdd.set({ name: p.name, at: Date.now() });
   }
 
-  setQty(productId: string, qty: number): void {
-    if (qty <= 0) return this.remove(productId);
-    this.items.update((list) => list.map((i) => (i.productId === productId ? { ...i, qty } : i)));
+  setQty(productId: string, qty: number, sizeKey?: ProductSizeKey): void {
+    if (qty <= 0) return this.remove(productId, sizeKey);
+    this.items.update((list) => list.map((i) =>
+      i.productId === productId && (i.sizeKey || undefined) === (sizeKey || undefined) ? { ...i, qty } : i,
+    ));
   }
 
-  remove(productId: string): void {
-    this.items.update((list) => list.filter((i) => i.productId !== productId));
+  remove(productId: string, sizeKey?: ProductSizeKey): void {
+    this.items.update((list) => list.filter((i) =>
+      !(i.productId === productId && (i.sizeKey || undefined) === (sizeKey || undefined)),
+    ));
   }
 
   clear(): void {

@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 import { Meta, Title } from '@angular/platform-browser';
 import { Product, effectivePrice } from './models';
-import { optimizedImage } from './util';
+import { optimizedImage, sizeOptions, sizeEffectivePrice } from './util';
 
 const SITE = 'Kauā Fragrances';
 const BASE = 'https://kauafragrances.co.za';
@@ -25,6 +25,7 @@ export class SeoService {
     this.setProp('og:url', url);
     this.setProp('og:type', 'website');
     this.set('twitter:card', 'summary_large_image');
+    this.setCanonical(url);
     this.clearJsonLd();
   }
 
@@ -34,6 +35,10 @@ export class SeoService {
     const desc = p.description || `${p.name} — inspired by designer perfumes from ${SITE}.`;
     this.page(p.name, desc, img, url);
     this.setProp('og:type', 'product');
+    const opts = sizeOptions(p);
+    const prices = opts.map((o) => sizeEffectivePrice(o.size));
+    const low = prices.length ? Math.min(...prices) : effectivePrice(p);
+    const high = prices.length ? Math.max(...prices) : effectivePrice(p);
     this.jsonLd({
       '@context': 'https://schema.org',
       '@type': 'Product',
@@ -41,14 +46,33 @@ export class SeoService {
       image: [img, ...(p.gallery ?? [])],
       description: desc,
       brand: { '@type': 'Brand', name: SITE },
-      offers: {
+      offers: opts.length > 1 ? {
+        '@type': 'AggregateOffer',
+        priceCurrency: 'ZAR',
+        lowPrice: low.toFixed(2),
+        highPrice: high.toFixed(2),
+        offerCount: opts.length,
+        availability: opts.some((o) => o.size.inStock && (o.size.stockQty == null || Number(o.size.stockQty) > 0))
+          ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+        url,
+      } : {
         '@type': 'Offer',
         priceCurrency: 'ZAR',
-        price: effectivePrice(p).toFixed(2),
+        price: low.toFixed(2),
         availability: p.inStock ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
         url,
       },
     });
+  }
+
+  private setCanonical(url: string): void {
+    let link = this.doc.querySelector('link[rel="canonical"]');
+    if (!link) {
+      link = this.doc.createElement('link');
+      link.setAttribute('rel', 'canonical');
+      this.doc.head.appendChild(link);
+    }
+    link.setAttribute('href', url);
   }
 
   private set(name: string, content: string): void {

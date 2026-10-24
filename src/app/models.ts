@@ -1,5 +1,24 @@
 // Shared shapes for the Kauā Fragrances shop. Keep in sync with the Oil Tracker admin.
 
+
+export type ProductSizeKey = 'size30' | 'size50' | 'size100';
+export const PRODUCT_SIZE_KEYS: ProductSizeKey[] = ['size30', 'size50', 'size100'];
+export const PRODUCT_SIZE_LABELS: Record<ProductSizeKey, string> = {
+  size30: '30ml',
+  size50: '50ml',
+  size100: '100ml',
+};
+
+export interface ProductSize {
+  size: string;
+  price: number;
+  salePrice?: number | null;
+  cost?: number | null;
+  stockQty: number | null;
+  inStock: boolean;
+  imageUrl?: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -11,6 +30,7 @@ export interface Product {
   inStock: boolean;
   active: boolean;
   imageUrl?: string;
+  sizes?: Partial<Record<ProductSizeKey, ProductSize>>;
   gallery?: string[]; // extra image URLs
   category?: string; // e.g. "Men", "Women", "Unisex", "Oud"
   gender?: string; // Men | Women | Unisex
@@ -62,6 +82,7 @@ export interface CustomerProfile {
 
 export interface OrderItem {
   productId: string;
+  sizeKey?: ProductSizeKey;
   name: string;
   size?: string;
   price: number;
@@ -75,7 +96,7 @@ export interface OrderContact {
   note?: string;
 }
 
-export type OrderStatus = 'pending' | 'paid' | 'fulfilled' | 'cancelled';
+export type OrderStatus = 'pending' | 'paid' | 'fulfilled' | 'shipped' | 'delivered' | 'cancelled';
 
 export type DeliveryMethod = 'delivery' | 'collection';
 
@@ -156,6 +177,7 @@ export interface StoreSettings {
 
 export interface CartItem {
   productId: string;
+  sizeKey?: ProductSizeKey;
   name: string;
   size?: string;
   price: number; // effective price (sale if applicable)

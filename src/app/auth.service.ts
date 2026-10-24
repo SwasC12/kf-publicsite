@@ -1,7 +1,6 @@
 import { Injectable, computed, signal } from '@angular/core';
 import {
   createUserWithEmailAndPassword,
-  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
@@ -41,11 +40,18 @@ export class AuthService {
     this.busy.set(true);
     this.error.set(null);
     try {
-      await sendPasswordResetEmail(getAuthInstance(), email.trim());
+      const res = await fetch('/api/request-password-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      if (res.status === 429) {
+        this.error.set('Too many reset requests. Please try again later.');
+        return false;
+      }
       return true;
-    } catch (e: any) {
-      const c = e?.code ?? '';
-      this.error.set(c.includes('invalid-email') ? 'That email address looks invalid.' : 'Could not send the reset email.');
+    } catch {
+      this.error.set('Could not send the reset email. Please try again.');
       return false;
     } finally {
       this.busy.set(false);

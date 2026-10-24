@@ -9,7 +9,7 @@ import { SeoService } from './seo.service';
 import { FavoritesService } from './favorites.service';
 import { IconComponent } from './icon.component';
 import { Product, effectivePrice, isOnSale } from './models';
-import { formatPrice, optimizedImage, productImage } from './util';
+import { formatPrice, optimizedImage, productImage, sizeOptions, sizeEffectivePrice, sizeOnSale, sizeAvailable, fromPrice } from './util';
 
 @Component({
   selector: 'app-shop',
@@ -146,8 +146,8 @@ import { formatPrice, optimizedImage, productImage } from './util';
         </button>
         <a class="thumb" [routerLink]="['/product', p.id]">
           <img [src]="img(p)" [alt]="p.name" loading="lazy" (error)="imgErr($event)" />
-          @if (onSale(p)) { <span class="sale-badge">Sale</span> }
-          @if (!p.inStock) { <span class="oos-badge">Sold out</span> }
+          @if (anySale(p)) { <span class="sale-badge">Sale</span> }
+          @if (!anyAvailable(p)) { <span class="oos-badge">Sold out</span> }
         </a>
         <div class="card-body">
           <a class="p-name" [routerLink]="['/product', p.id]">{{ p.name }}</a>
@@ -164,10 +164,12 @@ import { formatPrice, optimizedImage, productImage } from './util';
           }
           <div class="p-foot">
             <span class="p-price">
-              @if (onSale(p)) { <span class="was">{{ price(p.price) }}</span> }
-              {{ price(eff(p)) }}
+              @if (cardWas(p); as was) { <span class="was">{{ price(was) }}</span> }
+              {{ hasSizes(p) ? 'From ' : '' }}{{ price(cardPrice(p)) }}
             </span>
-            @if (p.inStock && (p.stockQty == null || p.stockQty > 0)) {
+            @if (hasSizes(p)) {
+              <a class="add-btn" [routerLink]="['/product', p.id]">Choose size</a>
+            } @else if (p.inStock && (p.stockQty == null || p.stockQty > 0)) {
               @if (cart.qtyOf(p.id) > 0) {
                 <div class="qty-row small card-qty">
                   <button class="qbtn" (click)="cart.setQty(p.id, cart.qtyOf(p.id) - 1)" aria-label="Less"><app-icon name="minus" [size]="14" /></button>
@@ -315,6 +317,16 @@ export class ShopComponent implements OnDestroy {
   incCard(p: Product): void {
     const max = p.stockQty == null ? 99 : p.stockQty;
     this.cart.setQty(p.id, Math.min(max, this.cart.qtyOf(p.id) + 1));
+  }
+
+  hasSizes(p: Product): boolean { return sizeOptions(p).length > 1; }
+  anySale(p: Product): boolean { return sizeOptions(p).some((o) => sizeOnSale(o.size)); }
+  anyAvailable(p: Product): boolean { return sizeOptions(p).some((o) => sizeAvailable(o.size)); }
+  cardPrice(p: Product): number { return fromPrice(p); }
+  cardWas(p: Product): number | null {
+    const opts = sizeOptions(p);
+    const sale = opts.find((o) => sizeOnSale(o.size));
+    return sale ? sale.size.price : null;
   }
 
   cta(link?: string): void {

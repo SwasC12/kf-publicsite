@@ -10,16 +10,33 @@ import { SettingsService } from './settings.service';
 import { Address, DeliveryMethod, Discount, emptyAddress } from './models';
 import { discountError, computeDiscount, DiscountLine } from './discount-util';
 import { SA_PROVINCES, formatPrice, isValidEmail, isValidPhone } from './util';
+import { IconComponent } from './icon.component';
 
 @Component({
   selector: 'app-checkout',
   standalone: true,
-  imports: [FormsModule, RouterLink, NgTemplateOutlet],
+  imports: [FormsModule, RouterLink, NgTemplateOutlet, IconComponent],
   template: `
     @if (cart.items().length === 0) {
       <div class="notice"><p>Your cart is empty.</p><a class="btn primary" routerLink="/">Browse fragrances</a></div>
     } @else if (settings.settings().storeOpen === false) {
       <div class="notice"><h2 class="section-title">We're currently closed</h2><p>{{ settings.settings().storeClosedMessage || 'The shop is temporarily not taking orders. Please check back soon.' }}</p><a class="btn" routerLink="/">Back to shop</a></div>
+    } @else if (!auth.isLoggedIn()) {
+      <div class="notice">
+        <app-icon name="user" [size]="40" />
+        <h2 class="section-title">Sign in to checkout</h2>
+        <p>Create an account or sign in so we can save your details and order history.</p>
+        <a class="btn primary" routerLink="/account" [queryParams]="{ return: '/checkout' }">Sign in / create account</a>
+      </div>
+    } @else if (!cust.profile()) {
+      <div class="notice"><p>Loading your account…</p></div>
+    } @else if (!hasAccountAddresses()) {
+      <div class="notice">
+        <app-icon name="user" [size]="40" />
+        <h2 class="section-title">Add your addresses</h2>
+        <p>Please add both a billing and delivery address to your account before checking out.</p>
+        <a class="btn primary" routerLink="/account" [queryParams]="{ return: '/checkout' }">Complete my profile</a>
+      </div>
     } @else {
       <h1 class="page-title">Checkout</h1>
       @if (!auth.isLoggedIn()) {
@@ -45,7 +62,7 @@ import { SA_PROVINCES, formatPrice, isValidEmail, isValidPhone } from './util';
             @if (settings.settings().collectionEnabled !== false) {
               <label class="method" [class.on]="method() === 'collection'">
                 <input type="radio" name="method" value="collection" [ngModel]="method()" (ngModelChange)="method.set('collection')" />
-                <span>Collect <em>Free</em></span>
+                <span>Pick up <em>Free</em></span>
               </label>
             }
           </div>
@@ -128,7 +145,7 @@ export class CheckoutComponent {
   readonly orders = inject(OrdersService);
   readonly auth = inject(AuthService);
   readonly settings = inject(SettingsService);
-  private cust = inject(CustomerService);
+  readonly cust = inject(CustomerService);
   private router = inject(Router);
 
   name = ''; email = ''; phone = ''; note = '';
@@ -173,7 +190,7 @@ export class CheckoutComponent {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code,
-          items: this.cart.items().map((i) => ({ productId: i.productId, qty: i.qty })),
+          items: this.cart.items().map((i) => ({ productId: i.productId, sizeKey: i.sizeKey || '', qty: i.qty })),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -214,8 +231,16 @@ export class CheckoutComponent {
     return f === 0 ? 'Free' : formatPrice(f);
   }
 
+  hasAccountAddresses(): boolean {
+    const p = this.cust.profile();
+    if (!p) return false;
+    return !!p.billing?.line1?.trim() && !!p.billing?.city?.trim()
+      && !!p.delivery?.line1?.trim() && !!p.delivery?.city?.trim();
+  }
+
   valid(): boolean {
-    const base = !!this.name.trim() && isValidEmail(this.email) && isValidPhone(this.phone) && this.termsAccepted;
+    const base = this.auth.isLoggedIn() && this.hasAccountAddresses()
+      && !!this.name.trim() && isValidEmail(this.email) && isValidPhone(this.phone) && this.termsAccepted;
     if (this.method() === 'collection') return base;
     return base && !!this.delivery.line1.trim() && !!this.delivery.city.trim();
   }

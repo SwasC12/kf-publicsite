@@ -10,8 +10,8 @@ import { SeoService } from './seo.service';
 import { FavoritesService } from './favorites.service';
 import { ReviewsService } from './reviews.service';
 import { IconComponent } from './icon.component';
-import { Product, effectivePrice, isOnSale } from './models';
-import { formatPrice, optimizedImage, placeholderFor, isCustomImage, productImage } from './util';
+import { Product, ProductSizeKey, effectivePrice, isOnSale } from './models';
+import { formatPrice, optimizedImage, placeholderFor, isCustomImage, productImage, sizeOptions, sizeEffectivePrice, sizeOnSale, sizeAvailable, fromPrice } from './util';
 
 @Component({
   selector: 'app-product',
@@ -51,7 +51,17 @@ import { formatPrice, optimizedImage, placeholderFor, isCustomImage, productImag
             <p class="pd-inspired">Smells like <strong>{{ p.inspiredBy }}</strong></p>
             <p class="pd-disclaimer">Our own interpretation — not affiliated with the original brand.</p>
           }
-          @if (p.size) { <span class="p-size">{{ p.size }}</span> }
+          @if (sizes().length > 1) {
+            <div class="size-picker" role="group" aria-label="Select size">
+              @for (o of sizes(); track o.key) {
+                <button type="button" class="size-chip" [class.active]="selectedSizeKey() === o.key"
+                        [disabled]="!available(o.size)" (click)="selectSize(o.key)">
+                  <span>{{ o.size.size }}</span>
+                  <em>{{ price(effSize(o.size)) }}</em>
+                </button>
+              }
+            </div>
+          }
 
           @if ((p.ratingCount || 0) > 0) {
             <div class="rating-row">
@@ -62,47 +72,49 @@ import { formatPrice, optimizedImage, placeholderFor, isCustomImage, productImag
             </div>
           }
 
-          <div class="pd-price">
-            @if (onSale(p)) { <span class="was">{{ price(p.price) }}</span> }
-            {{ price(eff(p)) }}
-          </div>
-
-          @if (p.inStock && p.stockQty != null && p.stockQty > 0 && p.stockQty <= 5) {
-            <p class="stock-low"><app-icon name="droplet" [size]="14" /> Only {{ p.stockQty }} left</p>
-          }
-
-          @if (p.description) { <p class="pd-desc">{{ p.description }}</p> }
-
-          @if (p.inStock && (p.stockQty == null || p.stockQty > 0)) {
-            <div class="qty-row">
-              <button class="qbtn" (click)="dec()" [disabled]="qty() <= 1"><app-icon name="minus" [size]="16" /></button>
-              <span class="qval">{{ qty() }}</span>
-              <button class="qbtn" (click)="inc()" [disabled]="p.stockQty != null && qty() >= p.stockQty"><app-icon name="plus" [size]="16" /></button>
+          @if (selectedSize(); as sz) {
+            <div class="pd-price">
+              @if (saleSize(sz)) { <span class="was">{{ price(sz.price) }}</span> }
+              {{ price(effSize(sz)) }}
             </div>
-            <div class="pd-actions">
-              <button class="btn primary big" (click)="add(p)"><app-icon name="cart" [size]="18" /> Add to cart</button>
+
+            @if (sz.inStock && sz.stockQty != null && sz.stockQty > 0 && sz.stockQty <= 5) {
+              <p class="stock-low"><app-icon name="droplet" [size]="14" /> Only {{ sz.stockQty }} left</p>
+            }
+
+            @if (p.description) { <p class="pd-desc">{{ p.description }}</p> }
+
+            @if (available(sz)) {
+              <div class="qty-row">
+                <button class="qbtn" (click)="dec()" [disabled]="qty() <= 1"><app-icon name="minus" [size]="16" /></button>
+                <span class="qval">{{ qty() }}</span>
+                <button class="qbtn" (click)="inc()" [disabled]="sz.stockQty != null && qty() >= sz.stockQty"><app-icon name="plus" [size]="16" /></button>
+              </div>
+              <div class="pd-actions">
+                <button class="btn primary big" (click)="add(p)"><app-icon name="cart" [size]="18" /> Add to cart</button>
+                <button class="btn big save-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)">
+                  <app-icon name="heart" [size]="18" [filled]="fav.has(p.id)" /> {{ fav.has(p.id) ? 'Saved' : 'Save' }}
+                </button>
+              </div>
+            } @else {
+              <div class="oos-note">Currently sold out in this size</div>
+              @if (notified()) {
+                <p class="promo-ok">Thanks! We'll email you as soon as it's back in stock.</p>
+              } @else {
+                <div class="notify-box">
+                  <p>Want it? Get an email the moment it's back in stock:</p>
+                  <div class="promo-row">
+                    <input type="email" [(ngModel)]="notifyEmail" name="ne" placeholder="you@email.com" />
+                    <button class="btn primary" (click)="notifyMe(p)" [disabled]="notifying() || !notifyEmail.trim()">
+                      {{ notifying() ? '…' : 'Notify me' }}
+                    </button>
+                  </div>
+                </div>
+              }
               <button class="btn big save-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)">
                 <app-icon name="heart" [size]="18" [filled]="fav.has(p.id)" /> {{ fav.has(p.id) ? 'Saved' : 'Save' }}
               </button>
-            </div>
-          } @else {
-            <div class="oos-note">Currently sold out</div>
-            @if (notified()) {
-              <p class="promo-ok">Thanks! We'll email you as soon as it's back in stock.</p>
-            } @else {
-              <div class="notify-box">
-                <p>Want it? Get an email the moment it's back in stock:</p>
-                <div class="promo-row">
-                  <input type="email" [(ngModel)]="notifyEmail" name="ne" placeholder="you@email.com" />
-                  <button class="btn primary" (click)="notifyMe(p)" [disabled]="notifying() || !notifyEmail.trim()">
-                    {{ notifying() ? '…' : 'Notify me' }}
-                  </button>
-                </div>
-              </div>
             }
-            <button class="btn big save-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)">
-              <app-icon name="heart" [size]="18" [filled]="fav.has(p.id)" /> {{ fav.has(p.id) ? 'Saved' : 'Save' }}
-            </button>
           }
 
           @if (p.notesTop || p.notesHeart || p.notesBase) {
@@ -171,7 +183,7 @@ import { formatPrice, optimizedImage, placeholderFor, isCustomImage, productImag
                 <div class="card-body">
                   <a class="p-name" [routerLink]="['/product', r.id]">{{ r.name }}</a>
                   @if (r.inspiredBy) { <span class="p-inspired">Smells like {{ r.inspiredBy }}</span> }
-                  <div class="p-foot"><span class="p-price">{{ price(eff(r)) }}</span></div>
+                  <div class="p-foot"><span class="p-price">{{ hasSizes(r) ? 'From ' : '' }}{{ price(startingPrice(r)) }}</span></div>
                 </div>
               </article>
             }
@@ -194,6 +206,12 @@ export class ProductComponent {
   private id = toSignal(this.route.paramMap, { requireSync: true });
   readonly qty = signal(1);
   readonly activeImg = signal(0);
+  readonly selectedSizeKey = signal<ProductSizeKey | undefined>(undefined);
+  readonly sizes = computed(() => { const p = this.product(); return p ? sizeOptions(p) : []; });
+  readonly selectedSize = computed(() => {
+    const opts = this.sizes();
+    return (opts.find((o) => o.key === this.selectedSizeKey()) || opts[0])?.size || null;
+  });
   readonly product = computed(() => {
     const id = this.id()?.get('id');
     return id ? this.svc.products().find((p) => p.id === id) : undefined;
@@ -225,9 +243,25 @@ export class ProductComponent {
   constructor() {
     effect(() => {
       const p = this.product();
-      if (p) { this.seo.product(p); this.reviewsSvc.watch(p.id); }
+      if (p) {
+        this.seo.product(p);
+        this.reviewsSvc.watch(p.id);
+        const opts = sizeOptions(p);
+        if (!opts.some((o) => o.key === this.selectedSizeKey())) this.selectedSizeKey.set(opts[0]?.key);
+      }
     });
   }
+
+  effSize = sizeEffectivePrice;
+  saleSize = sizeOnSale;
+  available = sizeAvailable;
+  selectSize(key: ProductSizeKey): void {
+    this.selectedSizeKey.set(key);
+    this.qty.set(1);
+    this.activeImg.set(0);
+  }
+  hasSizes(p: Product): boolean { return sizeOptions(p).length > 1; }
+  startingPrice(p: Product): number { return fromPrice(p); }
 
   avg(p: Product): number {
     return (p.ratingCount || 0) > 0 ? (p.ratingSum || 0) / (p.ratingCount || 1) : 0;
@@ -274,17 +308,20 @@ export class ProductComponent {
     return imgs.length ? imgs : [placeholderFor(p.gender)];
   }
   mainImage(p: Product): string | undefined {
+    const sel = this.selectedSize();
+    if (sel?.imageUrl) return optimizedImage(sel.imageUrl, 1200);
+    if (p.imageUrl) return optimizedImage(p.imageUrl, 1200);
     return this.images(p)[this.activeImg()] ?? this.images(p)[0];
   }
 
   inc(): void {
-    const max = this.product()?.stockQty ?? 99;
+    const max = this.selectedSize()?.stockQty ?? 99;
     this.qty.update((q) => Math.min(max, q + 1));
   }
   dec(): void { this.qty.update((q) => Math.max(1, q - 1)); }
   add(p: Product): void {
-    const max = p.stockQty ?? 99;
-    this.cart.add(p, Math.max(1, Math.min(max, this.qty())));
+    const max = this.selectedSize()?.stockQty ?? 99;
+    this.cart.add(p, Math.max(1, Math.min(max, this.qty())), this.selectedSizeKey());
   }
   imgErr(ev: Event): void { (ev.target as HTMLImageElement).style.visibility = 'hidden'; }
 }
