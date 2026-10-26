@@ -15,14 +15,21 @@
               <app-icon [name]="copied() ? 'check' : 'copy'" [size]="18" />
             </button>
           </div>
-          <span class="ref-hint">{{ o.paymentMethod === 'yoco' ? "We're confirming your card payment with Yoco. We'll email you as soon as it clears." : 'Use this reference on your EFT so we can match your payment.' }}</span>
+          <span class="ref-hint">{{ o.paymentMethod === 'yoco'
+            ? (paid() ? 'Payment received — your order is confirmed. We emailed your receipt.' : (checking() ? "Checking your payment with Yoco…" : "If you completed the Yoco checkout, your payment will show as confirmed shortly."))
+            : 'Use this reference on your EFT so we can match your payment.' }}</span>
         </div>
 
         @if (o.paymentMethod === 'yoco') {
           <div class="pay-card">
-            <h2>Card payment</h2>
-            <p>Your payment is being confirmed securely by <strong>Yoco</strong>. No card details are stored on our site.</p>
-            <p class="pay-note">You'll receive an email from us once the payment is confirmed. If Yoco shows a failure, you can retry from your cart.</p>
+            <h2>{{ paid() ? 'Payment confirmed' : 'Card payment' }}</h2>
+            @if (paid()) {
+              <p>Your card payment was confirmed securely by <strong>Yoco</strong>. No card details are stored on our site.</p>
+              <p class="pay-note">A receipt is on its way to your inbox. You can follow every step in <a routerLink="/account">your order history</a>.</p>
+            } @else {
+              <p>Your payment is being confirmed securely by <strong>Yoco</strong>. No card details are stored on our site.</p>
+              <p class="pay-note">{{ checking() ? 'Holding on while we check with Yoco…' : 'You will receive an email from us once the payment is confirmed.' }} If Yoco shows a failure, you can retry from your cart.</p>
+            }
           </div>
         } @else {
         <div class="pay-card">

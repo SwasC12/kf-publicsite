@@ -116,6 +116,9 @@ export interface Order {
   items: OrderItem[];
   total: number;
   status: OrderStatus;
+  courier?: string;
+  trackingNumber?: string;
+  paidAt?: number;
   createdAt: number;
   updatedAt: number;
 }

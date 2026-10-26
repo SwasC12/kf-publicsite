@@ -4,6 +4,7 @@ import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  sendEmailVerification,
   updateProfile,
   User,
 } from 'firebase/auth';
@@ -34,6 +35,37 @@ export class AuthService {
 
   async signIn(email: string, password: string): Promise<boolean> {
     return this.run(() => signInWithEmailAndPassword(getAuthInstance(), email.trim(), password).then(() => {}));
+  }
+
+  /** Send (or resend) the Firebase verification email for the signed-in user. */
+  async sendVerificationEmail(): Promise<boolean> {
+    const u = this.user();
+    if (!u) return false;
+    this.busy.set(true);
+    this.error.set(null);
+    try {
+      await sendEmailVerification(u);
+      return true;
+    } catch {
+      this.error.set('Could not send the verification email. Please try again shortly.');
+      return false;
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  /** Re-read the user record (e.g. after clicking the verification link). */
+  async reloadUser(): Promise<void> {
+    const current = getAuthInstance().currentUser;
+    if (!current) return;
+    try {
+      await current.reload();
+      // Bounce the signal so anything watching it re-runs.
+      this.user.set(null);
+      this.user.set(getAuthInstance().currentUser);
+    } catch {
+      /* ignore */
+    }
   }
 
   async resetPassword(email: string): Promise<boolean> {

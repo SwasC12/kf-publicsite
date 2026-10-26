@@ -33,6 +33,7 @@ export class AccountComponent {
   sameAsBilling = false;
   readonly saved = signal(false);
   readonly resetSent = signal(false);
+  readonly verifySent = signal(false);
 
   price = formatPrice;
 
@@ -46,12 +47,27 @@ export class AccountComponent {
         this.sameAsBilling = JSON.stringify(p.billing) === JSON.stringify(p.delivery);
       }
     });
+    // Always show fresh statuses/tracking when the account page opens.
+    if (this.auth.isLoggedIn()) void this.cust.refresh();
   }
 
   toggle(): void {
     this.mode.update((m) => (m === 'in' ? 'up' : 'in'));
     this.auth.error.set(null);
     this.resetSent.set(false);
+  }
+
+  async verifyEmail(): Promise<void> {
+    const ok = await this.auth.sendVerificationEmail();
+    if (ok) this.verifySent.set(true);
+  }
+
+  async refreshVerify(): Promise<void> {
+    await this.auth.reloadUser();
+    if (this.auth.user()?.emailVerified) {
+      this.verifySent.set(false);
+      await this.cust.refresh();
+    }
   }
 
   async forgot(): Promise<void> {

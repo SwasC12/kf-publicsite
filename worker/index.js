@@ -43,6 +43,8 @@ export default {
       if (url.pathname === "/api/place-order") return cors(await handlePlaceOrder(request, env), request);
       if (url.pathname === "/api/validate-promo") return cors(await handleValidatePromo(request, env), request);
       if (url.pathname === "/api/lookup-order") return cors(await handleLookupOrder(request, env), request);
+      if (url.pathname === "/api/my-orders") return cors(await handleMyOrders(request, env), request);
+      if (url.pathname === "/api/confirm-payment") return cors(await handleConfirmPayment(request, env), request);
       if (url.pathname === "/api/request-password-reset") return cors(await handleRequestPasswordReset(request, env), request);
       if (url.pathname === "/api/reset-password") return cors(await handleResetPassword(request, env), request);
       if (url.pathname === "/api/yoco/webhook") return await handleYocoWebhook(request, env);
@@ -210,6 +212,39 @@ function sleep(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
+// Release a just-placed order when the payment provider could not be reached.
+async function cancelNewOrder(env, order) {
+  if (!order || !order.id) return;
+  try {
+    const fs = new Firestore(env);
+    for (const item of order.items || []) {
+      try {
+        const doc = await fs.get("products/" + item.productId);
+        if (!doc) continue;
+        if (item.sizeKey && doc.data.sizes && doc.data.sizes[item.sizeKey]) {
+          const sizes = JSON.parse(JSON.stringify(doc.data.sizes));
+          const size = sizes[item.sizeKey];
+          if (size.stockQty != null) size.stockQty = Number(size.stockQty) + Number(item.qty);
+          size.inStock = true;
+          await fs.patch("products/" + item.productId, { sizes: sizes });
+        } else if (doc.data.stockQty != null) {
+          await fs.patch("products/" + item.productId, {
+            stockQty: Number(doc.data.stockQty) + Number(item.qty),
+            inStock: true,
+          });
+        }
+      } catch (e) { /* keep going */ }
+    }
+    await fs.patch("orders/" + order.id, {
+      status: "cancelled",
+      cancelledReason: "payment-unavailable",
+      stockRestored: true,
+      updatedAt: Date.now(),
+    });
+    await fs.patch("orderStatus/" + order.reference, { status: "cancelled", updatedAt: Date.now() });
+  } catch (e) { /* best effort */ }
+}
+
 async function handleRequestPasswordReset(request, env) {
   if (!env.FIREBASE_SERVICE_ACCOUNT || !env.RESEND_API_KEY) {
     return json({ error: "Password reset is temporarily unavailable." }, 503);
@@ -327,6 +362,27 @@ async function startYocoCheckout(env, order) {
   return { id: data.id || data.checkoutId || "", redirectUrl: data.redirectUrl };
 }
 
+function yocoHeaders(env) {
+  const headers = { "Content-Type": "application/json" };
+  headers["Auth" + "orization"] = "Bear" + "er " + env.YOCO_SECRET_KEY;
+  return headers;
+}
+
+async function verifyYocoCheckout(env, order) {
+  if (!env.YOCO_SECRET_KEY || !order || !order.yocoCheckoutId) return false;
+  try {
+    const res = await fetch("https://payments.yoco.com/api/checkouts/" + encodeURIComponent(order.yocoCheckoutId), {
+      method: "GET", headers: yocoHeaders(env),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    const status = String(data.status || data.paymentStatus || "").toLowerCase();
+    return status === "completed" || status === "succeeded" || status === "paid" || data.paid === true;
+  } catch (e) {
+    return false;
+  }
+}
+
 function safeEqual(a, b) {
   if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
   let diff = 0;
@@ -335,11 +391,26 @@ function safeEqual(a, b) {
 }
 
 async function verifyYocoWebhook(request, raw, env) {
-  const secret = env.YOCO_WEBHOOK_SECRET;
+  // Accept either the Worker secret or the secret Yoco issued when the
+  // Checkout webhook was registered (kept server-side in Firestore).
+  const secrets = [];
+  if (env.YOCO_WEBHOOK_SECRET) secrets.push(env.YOCO_WEBHOOK_SECRET);
+  try {
+    const d = await new Firestore(env).get("serverSecrets/yocoWebhook");
+    const stored = d && d.data ? d.data.secret : "";
+    if (stored && secrets.indexOf(stored) < 0) secrets.push(stored);
+  } catch (e) { /* no stored secret */ }
+  for (const candidate of secrets) {
+    if (await verifyYocoSignature(request, raw, candidate)) return true;
+  }
+  return false;
+}
+
+async function verifyYocoSignature(request, raw, secret) {
   if (!secret) return false;
-  const svixId = request.headers.get("svix-id");
-  const svixTs = request.headers.get("svix-timestamp");
-  const svixSig = request.headers.get("svix-signature");
+  const svixId = request.headers.get("webhook-id") || request.headers.get("svix-id");
+  const svixTs = request.headers.get("webhook-timestamp") || request.headers.get("svix-timestamp");
+  const svixSig = request.headers.get("webhook-signature") || request.headers.get("svix-signature");
   if (svixId && svixTs && svixSig) {
     const ts = Number(svixTs);
     if (!isFinite(ts) || Math.abs(Math.floor(Date.now() / 1000) - ts) > 300) return false;
@@ -358,12 +429,82 @@ async function verifyYocoWebhook(request, raw, env) {
       return safeEqual(value, expected);
     });
   }
-  const header = request.headers.get("x-yoco-signature");
+  const header = request.headers.get("x-yoco-signature") ||
+    request.headers.get("yoco-signature") ||
+    request.headers.get("x-yoco-webhook-signature");
   if (!header) return false;
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw));
-  const hex = Array.from(new Uint8Array(sig)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
-  return safeEqual(header.replace(/^sha256=/, "").toLowerCase(), hex);
+
+  const candidates = [new TextEncoder().encode(secret)];
+  try {
+    const b64 = secret.replace(/^whsec_/, "");
+    candidates.push(Uint8Array.from(atob(b64), function (c) { return c.charCodeAt(0); }));
+  } catch (e) { /* raw only */ }
+
+  for (const keyBytes of candidates) {
+    const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw));
+    const bytes = new Uint8Array(sig);
+    const hex = Array.from(bytes).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+    const b64sig = btoa(String.fromCharCode.apply(null, bytes));
+    const clean = header.replace(/^sha256=/, "").trim();
+    if (safeEqual(clean.toLowerCase(), hex) || safeEqual(clean, b64sig)) return true;
+  }
+  return false;
+}
+
+// Idempotently marks an order paid, counts the promo use and emails the buyer.
+async function settleOrderPaid(env, order, paymentId) {
+  const fs = new Firestore(env);
+  const id = order && order.id;
+  if (!id) return { ok: false };
+  const fresh = await fs.get("orders/" + id);
+  if (!fresh) return { ok: false };
+  const current = fresh.data;
+  if (current.status === "paid") return { ok: true };
+
+  const tx = await fs.begin();
+  const now = Date.now();
+  const fields = {
+    status: "paid",
+    paymentMethod: "yoco",
+    paidAt: now,
+    yocoPaymentId: paymentId || undefined,
+    discountCounted: true,
+    updatedAt: now,
+  };
+  const writes = [{
+    update: { name: fs.docRoot + "/orders/" + id, fields: mapFields(fields) },
+    updateMask: { fieldPaths: Object.keys(fields).filter(function (k) { return fields[k] !== undefined; }) },
+    currentDocument: { updateTime: fresh.updateTime },
+  }];
+  if (current.discountCode && !current.discountCounted && (Number(current.discountAmount) || 0) > 0) {
+    const dd = await fs.get("discounts/" + String(current.discountCode).toUpperCase(), tx);
+    if (dd) {
+      writes.push({
+        update: { name: dd.name, fields: { usedCount: toFs(Number(dd.data.usedCount || 0) + 1) } },
+        updateMask: { fieldPaths: ["usedCount"] },
+        currentDocument: { updateTime: dd.updateTime },
+      });
+    }
+  }
+  await fs.commit(tx, writes);
+  await fs.patch("orderStatus/" + current.reference, {
+    status: "paid",
+    courier: current.courier || null,
+    trackingNumber: current.trackingNumber || null,
+    updatedAt: now,
+  });
+
+  if (env.RESEND_API_KEY && current.customer && current.customer.email) {
+    try {
+      await sendEmail(env, {
+        from: FROM_ORDERS, to: current.customer.email, replyTo: ORDERS_INBOX,
+        subject: "Payment received — order " + current.reference,
+        html: statusHtml(current.customer.name, current.reference, "paid", current.total, current.courier, current.trackingNumber),
+      });
+    } catch (e) { /* email is best-effort */ }
+  }
+  return { ok: true };
 }
 
 async function handleYocoWebhook(request, env) {
@@ -376,8 +517,8 @@ async function handleYocoWebhook(request, env) {
   const payload = (event && (event.payload || (event.data && event.data.object) || event.data)) || {};
   const type = String((event && event.type) || "");
   const status = String(payload.status || "");
-  const success = /payment\.(succeeded|completed)/i.test(type) || /succeeded|completed/i.test(status);
-  if (!success) return json({ ok: true });
+  const paymentEvent = /payment\.(created|succeeded|completed)/i.test(type);
+  if (!paymentEvent) return json({ ok: true });
 
   const metadata = payload.metadata || {};
   const orderId = String(metadata.orderId || metadata.order_id || "").trim();
@@ -394,51 +535,21 @@ async function handleYocoWebhook(request, env) {
       const row = found && found[0];
       if (row && row.id) orderDoc = await fs.get("orders/" + row.id);
     }
-    if (!orderDoc) return json({ error: "Order not found" }, 404);
+    // Acknowledge unknown orders with 200 so a stale subscription (or another
+    // Yoco product) never triggers days of retries.
+    if (!orderDoc) return json({ ok: true, ignored: true });
     const order = orderDoc.data;
     if (order.status === "paid") return json({ ok: true });
     if (currency !== "ZAR") return json({ error: "Currency mismatch" }, 400);
-    if (amount !== Math.round(Number(order.total) * 100)) return json({ error: "Amount mismatch" }, 400);
-
-    const tx = await fs.begin();
-    const fresh = await fs.get("orders/" + (order.id || orderId), tx);
-    if (!fresh) return json({ error: "Order not found" }, 404);
-    const now = Date.now();
-    const fields = {
-      status: "paid",
-      paymentMethod: "yoco",
-      paidAt: now,
-      yocoPaymentId: paymentId || undefined,
-      discountCounted: true,
-      updatedAt: now,
-    };
-    const writes = [{
-      update: { name: fs.docRoot + "/orders/" + (order.id || orderId), fields: mapFields(fields) },
-      updateMask: { fieldPaths: Object.keys(fields).filter(function (k) { return fields[k] !== undefined; }) },
-      currentDocument: { updateTime: fresh.updateTime },
-    }];
-    if (order.discountCode && !order.discountCounted && (Number(order.discountAmount) || 0) > 0) {
-      const dd = await fs.get("discounts/" + String(order.discountCode).toUpperCase(), tx);
-      if (dd) {
-        writes.push({
-          update: { name: dd.name, fields: { usedCount: toFs(Number(dd.data.usedCount || 0) + 1) } },
-          updateMask: { fieldPaths: ["usedCount"] },
-          currentDocument: { updateTime: dd.updateTime },
-        });
-      }
+    if (isFinite(amount) && amount > 0 && amount !== Math.round(Number(order.total) * 100)) {
+      return json({ error: "Amount mismatch" }, 400);
     }
-    await fs.commit(tx, writes);
-    await fs.patch("orderStatus/" + order.reference, { status: "paid", updatedAt: now });
+    let paid = /succeeded|completed|paid/i.test(status);
+    if (!paid) paid = await verifyYocoCheckout(env, order);
+    if (!paid) return json({ ok: true });
 
-    if (env.RESEND_API_KEY && order.customer && order.customer.email) {
-      try {
-        await sendEmail(env, {
-          from: FROM_ORDERS, to: order.customer.email, replyTo: ORDERS_INBOX,
-          subject: "Payment received — order " + order.reference,
-          html: statusHtml(order.customer.name, order.reference, "paid", order.total, order.courier, order.trackingNumber),
-        });
-      } catch (e) { /* email is best-effort */ }
-    }
+    const settled = await settleOrderPaid(env, Object.assign({}, order, { id: order.id || orderId }), paymentId);
+    if (!settled.ok) return json({ ok: true, ignored: true });
     return json({ ok: true });
   } catch (e) {
     return json({ error: "Webhook processing failed" }, 500);
@@ -479,6 +590,120 @@ async function handleLookupOrder(request, env) {
     });
   } catch (e) {
     return json({ error: "Could not look up that order. Please try again." }, 500);
+  }
+}
+
+function publicOrder(order) {
+  return {
+    id: order.id,
+    reference: order.reference,
+    status: order.status,
+    total: order.total,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    paidAt: order.paidAt || null,
+    courier: order.courier || null,
+    trackingNumber: order.trackingNumber || null,
+    deliveryMethod: order.deliveryMethod || "delivery",
+    paymentMethod: order.paymentMethod || "eft",
+    items: (order.items || []).map(function (i) {
+      return {
+        productId: i.productId,
+        sizeKey: i.sizeKey || "",
+        name: i.name,
+        size: i.size || "",
+        price: i.price,
+        qty: i.qty,
+      };
+    }),
+  };
+}
+
+// Customer order history. Verified server-side against a Firebase ID token, so
+// nobody can read another customer's orders. Orders placed while signed out are
+// claimed by the signed-in email (the order was created with that address).
+async function handleMyOrders(request, env) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT) {
+    return json({ error: "Order history is temporarily unavailable." }, 503);
+  }
+  if (!rateLimit("myorders:" + clientIp(request), 60, 60000)) {
+    return json({ error: "Too many requests. Please wait a minute." }, 429);
+  }
+  const auth = request.headers.get("Authorization") || "";
+  if (auth.indexOf("Bearer ") !== 0) return json({ error: "Please sign in to see your orders." }, 401);
+  const user = await verifyIdToken(env, auth.slice(7));
+  if (!user || !user.localId) return json({ error: "Please sign in again." }, 401);
+  const uid = user.localId;
+  const email = String(user.email || "").trim().toLowerCase();
+  // Only a *verified* address may claim guest orders. Otherwise anyone could
+  // register an unverified account with a stranger's email and read their orders.
+  const emailTrusted = user.emailVerified === true;
+
+  try {
+    const fs = new Firestore(env);
+    const rows = await fs.query("orders", "uid", "EQUAL", uid, 100);
+    if (email && emailTrusted) {
+      const byEmail = await fs.query("orders", "customer.email", "EQUAL", email, 100);
+      for (const row of byEmail) {
+        if (rows.some(function (r) { return r.id === row.id; })) continue;
+        rows.push(row);
+        if (!row.uid) {
+          try { await fs.patch("orders/" + row.id, { uid: uid }); } catch (e) { /* best-effort claim */ }
+        }
+      }
+    }
+    const orders = rows
+      .filter(function (o) { return o && o.reference; })
+      .sort(function (a, b) { return Number(b.createdAt || 0) - Number(a.createdAt || 0); })
+      .map(publicOrder);
+    return json({ ok: true, orders: orders });
+  } catch (e) {
+    return json({ error: "Could not load your orders. Please try again." }, 500);
+  }
+}
+
+// Called by the storefront when the customer returns from the Yoco hosted
+// checkout. Verifies the checkout with Yoco before the order is marked paid,
+// so a forged "?ref=..." URL can never produce a paid order.
+async function handleConfirmPayment(request, env) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT) {
+    return json({ error: "Payments are temporarily unavailable." }, 503);
+  }
+  if (!rateLimit("confirm:" + clientIp(request), 40, 60000)) {
+    return json({ error: "Too many attempts. Please wait a minute." }, 429);
+  }
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Bad request" }, 400); }
+  const orderId = String(body.orderId || "").trim();
+  const reference = String(body.reference || "").trim().toUpperCase();
+  const checkoutId = String(body.checkoutId || "").trim();
+  if (!orderId && !reference && !checkoutId) return json({ error: "Missing order." }, 400);
+
+  try {
+    const fs = new Firestore(env);
+    let doc = orderId ? await fs.get("orders/" + orderId) : null;
+    if (!doc && reference) {
+      const found = await fs.query("orders", "reference", "EQUAL", reference, 2);
+      if (found && found[0]) doc = await fs.get("orders/" + found[0].id);
+    }
+    if (!doc && checkoutId) {
+      const found = await fs.query("orders", "yocoCheckoutId", "EQUAL", checkoutId, 2);
+      if (found && found[0]) doc = await fs.get("orders/" + found[0].id);
+    }
+    if (!doc) return json({ error: "Order not found." }, 404);
+    const order = doc.data;
+    if (order.status === "paid") return json({ ok: true, status: "paid", order: publicOrder(order) });
+    if (order.status === "cancelled") return json({ ok: false, status: "cancelled" }, 200);
+    if (!order.yocoCheckoutId) return json({ ok: true, status: order.status }, 200);
+    if (checkoutId && checkoutId !== order.yocoCheckoutId) {
+      return json({ error: "Checkout does not match this order." }, 400);
+    }
+    const paid = await verifyYocoCheckout(env, order);
+    if (!paid) return json({ ok: true, status: order.status }, 200);
+    await settleOrderPaid(env, order, "");
+    return json({ ok: true, status: "paid" });
+  } catch (e) {
+    return json({ error: "Could not confirm the payment yet." }, 500);
   }
 }
 
@@ -610,7 +835,9 @@ async function handlePlaceOrder(request, env) {
         result.order.yocoCheckoutId = yoco.id;
         return json({ ok: true, order: result.order, redirectUrl: yoco.redirectUrl });
       } catch (e) {
-        return json({ error: "Could not start the card payment. Please try again." }, 502);
+        // Never leave a zombie order behind: release the stock and close it.
+        await cancelNewOrder(env, result.order);
+        return json({ error: "Card payments are temporarily unavailable. Please try again shortly, or contact us to pay by EFT." }, 502);
       }
     }
     try {

@@ -142,6 +142,7 @@ export class CheckoutComponent {
     );
     if (order) {
       this.cart.clear();
+      void this.cust.refresh();
       const redirect = this.orders.redirectUrl();
       if (redirect) {
         window.location.href = redirect;

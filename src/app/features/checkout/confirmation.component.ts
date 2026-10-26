@@ -18,7 +18,44 @@ export class ConfirmationComponent {
   private settings = inject(SettingsService);
   get bank() { return this.settings.bankingDetails(); }
   readonly copied = signal(false);
+  readonly paid = signal(false);
+  readonly checking = signal(false);
   price = formatPrice;
+
+  constructor() {
+    // Yoco sends the customer back with ?ref=... . Ask the Worker to verify the
+    // checkout with Yoco, so the order is marked paid even if the webhook lags.
+    const ref = new URLSearchParams(location.search).get('ref') || '';
+    const last = this.orders.lastOrder();
+    if (last?.status === 'paid') this.paid.set(true);
+    else void this.confirmPayment(ref, last?.id || '');
+  }
+
+  private async confirmPayment(reference: string, orderId: string): Promise<void> {
+    if (!reference && !orderId) return;
+    this.checking.set(true);
+    try {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const res = await fetch('/api/confirm-payment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reference, orderId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data && data.status === 'paid') {
+          this.paid.set(true);
+          const o = this.orders.lastOrder();
+          if (o) this.orders.lastOrder.set({ ...o, status: 'paid' });
+          return;
+        }
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 2500));
+      }
+    } catch {
+      /* the webhook or a later refresh will settle it */
+    } finally {
+      this.checking.set(false);
+    }
+  }
 
   copy(ref: string): void {
     navigator.clipboard?.writeText(ref).then(

@@ -1,5 +1,5 @@
 import { Injectable, effect, inject, signal } from '@angular/core';
-import { doc, getDoc, setDoc, collection, query, where, orderBy, onSnapshot, Unsubscribe } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { getDb } from '@core/firebase/firebase';
 import { AuthService } from '@core/services/auth.service';
 import { Address, CustomerProfile, Order, emptyAddress } from '@core/models';
@@ -11,22 +11,24 @@ export class CustomerService {
   readonly profile = signal<CustomerProfile | null>(null);
   readonly orders = signal<Order[]>([]);
   readonly saving = signal(false);
-  private ordersUnsub?: Unsubscribe;
 
   constructor() {
     // Load/refresh the profile + order history whenever the signed-in user changes.
     effect(() => {
       const u = this.auth.user();
-      this.ordersUnsub?.();
-      this.ordersUnsub = undefined;
       this.orders.set([]);
       if (!u) {
         this.profile.set(null);
         return;
       }
       void this.loadProfile(u.uid, u.email ?? '', u.displayName ?? '');
-      this.watchOrders(u.uid);
+      void this.loadOrders();
     });
+  }
+
+  /** Re-fetch the order history (e.g. after returning from checkout). */
+  async refresh(): Promise<void> {
+    await this.loadOrders();
   }
 
   private async loadProfile(uid: string, email: string, name: string): Promise<void> {
@@ -42,15 +44,30 @@ export class CustomerService {
     }
   }
 
-  private watchOrders(uid: string): void {
+  /**
+   * Order history comes from the Worker, which verifies the signed-in user and
+   * also links orders that were placed with the same email before signing in.
+   * This avoids trusting (or indexing) the orders collection from the browser.
+   */
+  private async loadOrders(): Promise<void> {
+    const u = this.auth.user();
+    if (!u) {
+      this.orders.set([]);
+      return;
+    }
     try {
-      this.ordersUnsub = onSnapshot(
-        query(collection(getDb(), 'orders'), where('uid', '==', uid), orderBy('createdAt', 'desc')),
-        (snap) => this.orders.set(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Order, 'id'>) }))),
-        () => this.orders.set([]),
-      );
+      const token = await u.getIdToken();
+      const res = await fetch('/api/my-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: '{}',
+      });
+      const data = await res.json().catch(() => ({}));
+      const list = Array.isArray(data.orders) ? (data.orders as Order[]) : [];
+      list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      this.orders.set(list);
     } catch {
-      /* ignore */
+      /* keep whatever we already have */
     }
   }
 

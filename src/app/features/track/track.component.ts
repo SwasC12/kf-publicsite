@@ -1,6 +1,6 @@
 import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { SeoService } from '@core/services/seo.service';
 import { IconComponent } from '@shared/components/icon/icon.component';
 import { OrderStatus } from '@core/models';
@@ -25,7 +25,14 @@ export class TrackComponent {
   readonly steps = STEPS;
   price = formatPrice;
 
-  constructor() { inject(SeoService).page('Track order'); }
+  constructor() {
+    inject(SeoService).page('Track order');
+    // Deep link from the account page: /track?ref=KF-XXXXX&email=...
+    const params = inject(ActivatedRoute).snapshot.queryParamMap;
+    this.ref = (params.get('ref') || '').toUpperCase();
+    this.email = params.get('email') || '';
+    if (this.ref && this.email) void this.lookup();
+  }
 
   async lookup(): Promise<void> {
     const code = this.ref.trim().toUpperCase();

@@ -38,6 +38,17 @@
         </div>
         <p class="auth-sub">Signed in as {{ auth.user()?.email }}</p>
 
+        @if (auth.user() && !auth.user()?.emailVerified) {
+          <div class="notice verify-email">
+            <p><strong>Verify your email.</strong> Orders you placed as a guest are linked to this account once your address is confirmed.</p>
+            @if (verifySent()) { <p class="form-ok">Verification email sent — check your inbox.</p> }
+            <div class="verify-actions">
+              <button type="button" class="btn" (click)="verifyEmail()" [disabled]="auth.busy()">Resend verification email</button>
+              <button type="button" class="linkbtn" (click)="refreshVerify()">I've verified</button>
+            </div>
+          </div>
+        }
+
         <form class="profile-form" (ngSubmit)="save()">
           <h2 class="block-title">Contact</h2>
           <div class="row">
@@ -69,7 +80,15 @@
                 <div><span class="hist-ref">{{ o.reference }}</span><span class="hist-date">{{ date(o.createdAt) }}</span></div>
                 <span class="status-pill" [attr.data-status]="o.status">{{ o.status }}</span>
                 <span class="hist-total">{{ price(o.total) }}</span>
+                <a class="hist-track" routerLink="/track" [queryParams]="{ ref: o.reference, email: auth.user()?.email }">Track</a>
               </div>
+              @if (o.courier || o.trackingNumber) {
+                <div class="hist-ship">
+                  <app-icon name="package" [size]="14" />
+                  <span>{{ o.courier || 'Courier' }}</span>
+                  @if (o.trackingNumber) { <strong class="hist-waybill">{{ o.trackingNumber }}</strong> }
+                </div>
+              }
             }
           </div>
         }
