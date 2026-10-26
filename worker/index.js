@@ -352,14 +352,26 @@ async function startYocoCheckout(env, order) {
   };
   const headers = { "Content-Type": "application/json" };
   headers["Auth" + "orization"] = "Bear" + "er " + env.YOCO_SECRET_KEY;
-  const res = await fetch("https://payments.yoco.com/api/checkouts", {
-    method: "POST", headers: headers, body: JSON.stringify(payload),
-  });
-  const data = await res.json().catch(function () { return {}; });
-  if (!res.ok || !data.redirectUrl) {
-    throw httpError(502, "Yoco checkout failed.");
+  let res = null;
+  let data = {};
+  // Yoco occasionally answers 429/503 when several checkouts are opened in a
+  // row. One short retry fixes the common case instead of failing the order.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    res = await fetch("https://payments.yoco.com/api/checkouts", {
+      method: "POST", headers: headers, body: JSON.stringify(payload),
+    });
+    data = await res.json().catch(function () { return {}; });
+    if (res.ok && data.redirectUrl) {
+      return { id: data.id || data.checkoutId || "", redirectUrl: data.redirectUrl };
+    }
+    const transient = res.status === 429 || res.status >= 500;
+    if (!transient || attempt === 1) break;
+    await sleep(700);
   }
-  return { id: data.id || data.checkoutId || "", redirectUrl: data.redirectUrl };
+  const err = httpError(502, "Yoco checkout failed.");
+  err.yocoStatus = res ? res.status : 0;
+  err.yocoBody = JSON.stringify(data).slice(0, 400);
+  throw err;
 }
 
 function yocoHeaders(env) {
@@ -835,6 +847,29 @@ async function handlePlaceOrder(request, env) {
         result.order.yocoCheckoutId = yoco.id;
         return json({ ok: true, order: result.order, redirectUrl: yoco.redirectUrl });
       } catch (e) {
+        // A 400 from Yoco is a validation message we can safely show the buyer.
+        if (e && Number(e.yocoStatus) === 400) {
+          let msg = "";
+          try {
+            const parsed = JSON.parse(e.yocoBody || "{}");
+            msg = String(parsed.description || parsed.message || "").slice(0, 200);
+          } catch (err) { /* ignore */ }
+          if (msg) {
+            await cancelNewOrder(env, result.order);
+            return json({ error: msg }, 400);
+          }
+        }
+        // Record why Yoco failed so it can be diagnosed (never shown to buyers).
+        try {
+          await new Firestore(env).patch("serverSecrets/yocoLastError", {
+            at: Date.now(),
+            orderRef: result.order.reference,
+            total: Number(result.order.total) || 0,
+            status: Number(e && e.status) || 0,
+            yocoStatus: Number(e && e.yocoStatus) || 0,
+            detail: String((e && e.yocoBody) || (e && e.message) || e).slice(0, 500),
+          });
+        } catch (err) { /* best effort */ }
         // Never leave a zombie order behind: release the stock and close it.
         await cancelNewOrder(env, result.order);
         return json({ error: "Card payments are temporarily unavailable. Please try again shortly, or contact us to pay by EFT." }, 502);
@@ -1090,6 +1125,11 @@ class Firestore {
 
     const total = round2(Math.max(0, subtotal + fee - discountAmount));
     if (!(total > 0)) throw httpError(400, "The order total must be greater than zero.");
+    // Yoco refuses anything under R2.00 — catch it here with a useful message
+    // instead of failing later at the payment step.
+    if ((input.paymentMethod || "yoco") === "yoco" && total < 2) {
+      throw httpError(400, "Card payments need a total of at least R2.00. Please add another item, or contact us to arrange it.");
+    }
 
     let reference = "KF-" + refCode(5);
     for (let i = 0; i < 5; i++) {

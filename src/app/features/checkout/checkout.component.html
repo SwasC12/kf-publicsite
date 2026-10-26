@@ -52,7 +52,7 @@
           @if (method() === 'delivery') {
             <ng-container *ngTemplateOutlet="addr; context: { $implicit: delivery }" />
           } @else {
-            <p class="pay-info">{{ settings.settings().collectionNote || 'We\\'ll arrange collection details with you after your order.' }}</p>
+            <p class="pay-info">{{ settings.settings().collectionNote || "We'll arrange collection details with you after your order." }}</p>
           }
 
           <label>Order note (optional)<textarea name="note" rows="2" [(ngModel)]="note" placeholder="Delivery instructions, preferences…"></textarea></label>
