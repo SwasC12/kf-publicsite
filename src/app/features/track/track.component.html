@@ -34,6 +34,9 @@
               <span class="track-courier-label">Courier</span>
               <strong>{{ r.courier || 'Courier' }}</strong>
               @if (r.trackingNumber) { <span class="track-courier-no">{{ r.trackingNumber }}</span> }
+              @if (r.trackingUrl) {
+                <a class="track-courier-link" [href]="r.trackingUrl" target="_blank" rel="noopener noreferrer">Track parcel →</a>
+              }
             </div>
           }
         </div>

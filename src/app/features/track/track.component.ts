@@ -6,7 +6,7 @@ import { IconComponent } from '@shared/components/icon/icon.component';
 import { OrderStatus } from '@core/models';
 import { formatPrice } from '@core/utils';
 
-interface StatusDoc { reference: string; status: OrderStatus; total: number; createdAt: number; updatedAt: number; courier?: string; trackingNumber?: string; }
+interface StatusDoc { reference: string; status: OrderStatus; total: number; createdAt: number; updatedAt: number; courier?: string; trackingNumber?: string; trackingUrl?: string; }
 const STEPS: OrderStatus[] = ['pending', 'paid', 'fulfilled', 'shipped', 'delivered'];
 
 @Component({

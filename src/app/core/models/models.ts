@@ -118,6 +118,7 @@ export interface Order {
   status: OrderStatus;
   courier?: string;
   trackingNumber?: string;
+  trackingUrl?: string;
   paidAt?: number;
   createdAt: number;
   updatedAt: number;

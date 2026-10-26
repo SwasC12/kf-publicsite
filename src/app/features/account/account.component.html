@@ -87,6 +87,9 @@
                   <app-icon name="package" [size]="14" />
                   <span>{{ o.courier || 'Courier' }}</span>
                   @if (o.trackingNumber) { <strong class="hist-waybill">{{ o.trackingNumber }}</strong> }
+                  @if (o.trackingUrl) {
+                    <a class="hist-waybill-link" [href]="o.trackingUrl" target="_blank" rel="noopener noreferrer">Track parcel</a>
+                  }
                 </div>
               }
             }

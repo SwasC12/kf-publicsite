@@ -185,7 +185,7 @@ async function handleSend(request, env) {
     try {
       await sendEmail(env, { from: FROM_ORDERS, to, replyTo: "orders@kauafragrances.co.za",
         subject: subject, html: statusHtml(name, ref, st, Number(body.total) || 0,
-          clip(body.courier, 80), clip(body.trackingNumber, 80)) });
+          clip(body.courier, 80), clip(body.trackingNumber, 80), clip(body.trackingUrl, 500)) });
       return json({ ok: true });
     } catch (e) {
       return json({ error: "Send failed" }, 502);
@@ -504,6 +504,7 @@ async function settleOrderPaid(env, order, paymentId) {
     status: "paid",
     courier: current.courier || null,
     trackingNumber: current.trackingNumber || null,
+    trackingUrl: current.trackingUrl || null,
     updatedAt: now,
   });
 
@@ -512,7 +513,7 @@ async function settleOrderPaid(env, order, paymentId) {
       await sendEmail(env, {
         from: FROM_ORDERS, to: current.customer.email, replyTo: ORDERS_INBOX,
         subject: "Payment received — order " + current.reference,
-        html: statusHtml(current.customer.name, current.reference, "paid", current.total, current.courier, current.trackingNumber),
+        html: statusHtml(current.customer.name, current.reference, "paid", current.total, current.courier, current.trackingNumber, current.trackingUrl),
       });
     } catch (e) { /* email is best-effort */ }
   }
@@ -598,6 +599,7 @@ async function handleLookupOrder(request, env) {
         paidAt: order.paidAt || null,
         courier: order.courier || null,
         trackingNumber: order.trackingNumber || null,
+        trackingUrl: order.trackingUrl || null,
       },
     });
   } catch (e) {
@@ -616,6 +618,7 @@ function publicOrder(order) {
     paidAt: order.paidAt || null,
     courier: order.courier || null,
     trackingNumber: order.trackingNumber || null,
+    trackingUrl: order.trackingUrl || null,
     deliveryMethod: order.deliveryMethod || "delivery",
     paymentMethod: order.paymentMethod || "eft",
     items: (order.items || []).map(function (i) {
@@ -1562,12 +1565,13 @@ function restockHtml(product) {
     <p style="margin-top:20px">${BTN(SITE_URL, 'Shop now')}</p>`);
 }
 
-function statusHtml(name, reference, status, total, courier, trackingNumber) {
-  const trackBlock = (courier || trackingNumber)
+function statusHtml(name, reference, status, total, courier, trackingNumber, trackingUrl) {
+  const trackBlock = (courier || trackingNumber || trackingUrl)
     ? `<div style="background:#f7f5f1;border-radius:12px;padding:14px 18px;margin:16px 0;font-size:14px;color:#3b352f">
         <div style="font-weight:800;text-transform:uppercase;letter-spacing:0.05em;font-size:11px;color:#7d766c;margin-bottom:6px">Delivery</div>
         ${courier ? `<div><strong>Courier:</strong> ${esc(courier)}</div>` : ''}
         ${trackingNumber ? `<div><strong>Tracking:</strong> ${esc(trackingNumber)}</div>` : ''}
+        ${trackingUrl ? `<div style="margin-top:6px"><a href="${esc(trackingUrl)}" style="color:#7a4a2b;font-weight:700">Track your parcel &rarr;</a></div>` : ''}
       </div>` : '';
   if (status === 'paid') {
     return shell(`
