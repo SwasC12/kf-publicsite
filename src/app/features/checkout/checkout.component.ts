@@ -141,13 +141,15 @@ export class CheckoutComponent {
       'yoco',
     );
     if (order) {
-      this.cart.clear();
       void this.cust.refresh();
       const redirect = this.orders.redirectUrl();
       if (redirect) {
+        // Keep the cart until the payment is confirmed. If Yoco fails or the
+        // customer cancels, their items are still there to try again.
         window.location.href = redirect;
         return;
       }
+      this.cart.clear();
       this.router.navigate(['/order-confirmed']);
     }
   }

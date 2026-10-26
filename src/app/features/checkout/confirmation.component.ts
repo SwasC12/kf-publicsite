@@ -1,5 +1,6 @@
 import { Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { CartService } from '@core/services/cart.service';
 import { OrdersService } from '@core/services/orders.service';
 import { SettingsService } from '@core/services/settings.service';
 import { IconComponent } from '@shared/components/icon/icon.component';
@@ -15,6 +16,7 @@ import { formatPrice } from '@core/utils';
 })
 export class ConfirmationComponent {
   readonly orders = inject(OrdersService);
+  private cart = inject(CartService);
   private settings = inject(SettingsService);
   get bank() { return this.settings.bankingDetails(); }
   readonly copied = signal(false);
@@ -27,7 +29,10 @@ export class ConfirmationComponent {
     // checkout with Yoco, so the order is marked paid even if the webhook lags.
     const ref = new URLSearchParams(location.search).get('ref') || '';
     const last = this.orders.lastOrder();
-    if (last?.status === 'paid') this.paid.set(true);
+    if (last?.status === 'paid') {
+      this.paid.set(true);
+      this.cart.clear();
+    }
     else void this.confirmPayment(ref, last?.id || '');
   }
 
@@ -44,6 +49,7 @@ export class ConfirmationComponent {
         const data = await res.json().catch(() => ({}));
         if (data && data.status === 'paid') {
           this.paid.set(true);
+          this.cart.clear();
           const o = this.orders.lastOrder();
           if (o) this.orders.lastOrder.set({ ...o, status: 'paid' });
           return;

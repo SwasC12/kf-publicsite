@@ -458,6 +458,9 @@ a { color: inherit; }
 }
 .pw-toggle:hover { color: var(--ink); }
 
+.notice.pay-cancelled { border-left: 3px solid var(--gold); background: #fdf6e9; }
+.notice.pay-cancelled p { margin: 0; font-size: 14px; }
+
 /* ---------- Delivery method toggle ---------- */
 .method-toggle { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .method {
@@ -466,6 +469,22 @@ a { color: inherit; }
   font-size: 14px; font-weight: 600;
 }
 .method.on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink) inset; }
+/* The form's text-input rule was stretching the radio into a pill. A radio is
+   just a small circle: clear border, dot when chosen. */
+.checkout-form .method input[type="radio"] {
+  appearance: none; -webkit-appearance: none;
+  width: 16px; height: 16px; min-width: 16px; flex: 0 0 16px;
+  margin: 0; padding: 0; border: 1.5px solid var(--line); border-radius: 50%;
+  background: transparent; box-shadow: none;
+}
+.checkout-form .method input[type="radio"]:checked {
+  border-color: var(--ink);
+  background: radial-gradient(circle, var(--ink) 0 4px, transparent 5px);
+}
+.checkout-form .method input[type="radio"]:focus,
+.checkout-form .method input[type="radio"]:focus-visible {
+  outline: 2px solid var(--ink); outline-offset: 2px; border-color: var(--ink);
+}
 .method em { font-style: normal; color: var(--ink-dim); font-weight: 500; }
 .ship-hint { font-size: 13px; color: var(--accent-dark); margin: 8px 0 0; font-weight: 600; }
 

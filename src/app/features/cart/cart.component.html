@@ -1,6 +1,12 @@
 
     <h1 class="page-title">Your cart</h1>
 
+    @if (paymentCancelled() && cart.items().length > 0) {
+      <div class="notice pay-cancelled">
+        <p>Payment was cancelled — nothing was charged. Your items are still here, ready when you are.</p>
+      </div>
+    }
+
     @if (cart.items().length === 0) {
       <div class="notice">
         <app-icon name="cart" [size]="40" />
