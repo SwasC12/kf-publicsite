@@ -973,4 +973,37 @@ h1, h2, h3 {
   outline: 2px solid var(--ink); outline-offset: 1px; border-color: var(--accent);
 }
 
+/* ========== Media responsiveness: phone → tablet → desktop ========== */
+img { max-width: 100%; height: auto; }
 
+/* Keep the subject in frame instead of cropping heads on portrait screens */
+.hero.has-image { background-position: center 38%; background-repeat: no-repeat; }
+
+@media (min-width: 768px) {
+  .hero { padding: 56px 28px 60px; }
+  .hero.has-image { min-height: 380px; justify-content: center; }
+  .hero h1 { font-size: clamp(32px, 4.4vw, 50px); }
+  .hero .tagline { font-size: 21px; }
+  .carousel { height: clamp(300px, 40vw, 420px); }
+  .slide-body h2 { font-size: clamp(26px, 3.4vw, 36px); }
+}
+
+/* Tablets — portrait and landscape (iPad 768 / 820 / 1024) */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .hero.has-image { background-position: center 30%; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 18px; }
+  .carousel.image-only { aspect-ratio: 2.6 / 1; }
+  .container, .wrap, .page { padding-left: 20px; padding-right: 20px; }
+}
+
+@media (min-width: 1025px) {
+  .hero.has-image { min-height: 460px; }
+  .carousel { height: 440px; }
+}
+
+/* Touch devices: never let a tap target fall below ~44px */
+@media (hover: none) and (pointer: coarse) {
+  .btn, .add-btn, .qbtn, .icon-btn, .fav-btn, .nav-icon, .qty-row button { min-height: 44px; }
+  .icon-btn, .fav-btn, .qbtn { min-width: 44px; }
+  input, select, textarea { font-size: 16px; }
+}
