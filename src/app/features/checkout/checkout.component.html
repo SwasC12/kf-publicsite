@@ -57,6 +57,9 @@
 
           <label>Order note (optional)<textarea name="note" rows="2" [(ngModel)]="note" placeholder="Delivery instructions, preferences…"></textarea></label>
 
+          <h2 class="block-title">Referral code <span class="dim">(optional)</span></h2>
+          <label>Friend's code<input type="text" name="referral" [(ngModel)]="referral" placeholder="KFXXXXXX" autocapitalize="characters" /></label>
+
           <h2 class="block-title">Promo code</h2>
           <div class="promo-row">
             <input type="text" name="promo" [(ngModel)]="promo" placeholder="Enter code" style="text-transform:uppercase" />

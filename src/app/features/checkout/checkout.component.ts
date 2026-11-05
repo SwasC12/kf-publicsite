@@ -31,6 +31,7 @@ export class CheckoutComponent {
   delivery: Address = emptyAddress();
   readonly method = signal<DeliveryMethod>('delivery');
   promo = '';
+  referral = '';
   readonly applied = signal<Discount | null>(null);
   readonly promoError = signal<string | null>(null);
   readonly emailTouched = signal(false);
@@ -139,6 +140,7 @@ export class CheckoutComponent {
       this.applied()?.code,
       this.discountAmount(),
       'yoco',
+      this.referral.trim(),
     );
     if (order) {
       void this.cust.refresh();

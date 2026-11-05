@@ -10,6 +10,7 @@ import { SeoService } from '@core/services/seo.service';
 import { FavoritesService } from '@core/services/favorites.service';
 import { ReviewsService } from '@core/services/reviews.service';
 import { IconComponent } from '@shared/components/icon/icon.component';
+import { ContentService } from '@core/services/content.service';
 import { Product, ProductSizeKey, effectivePrice, isOnSale } from '@core/models';
 import { formatPrice, optimizedImage, placeholderFor, isCustomImage, productImage, sizeOptions, sizeEffectivePrice, sizeOnSale, sizeAvailable, fromPrice } from '@core/utils';
 
@@ -24,6 +25,7 @@ export class ProductComponent {
   readonly svc = inject(ProductsService);
   readonly fav = inject(FavoritesService);
   private cart = inject(CartService);
+  private content = inject(ContentService);
   private route = inject(ActivatedRoute);
 
   private id = toSignal(this.route.paramMap, { requireSync: true });
@@ -130,9 +132,23 @@ export class ProductComponent {
       .map((x) => optimizedImage(x, 1200));
     return imgs.length ? imgs : [placeholderFor(p.gender)];
   }
+  /** Image Manager slot for a gender + size, when the admin uploaded one. */
+  sizeSlotImage(gender: string | undefined, sizeKey: ProductSizeKey | undefined): string | undefined {
+    const c = this.content.content() as Record<string, unknown>;
+    const women = String(gender || '').toLowerCase().startsWith('w');
+    const suffix = sizeKey === 'size50' ? '50' : sizeKey === 'size100' ? '100' : '30';
+    const value = c[(women ? 'placeholderWomen' : 'placeholderMen') + suffix];
+    return typeof value === 'string' && value ? value : undefined;
+  }
+
   mainImage(p: Product): string | undefined {
     const sel = this.selectedSize();
+    // 1. the product's own image for this size
     if (sel?.imageUrl) return optimizedImage(sel.imageUrl, 1200);
+    // 2. the gender + size placeholder uploaded in the admin Image Manager
+    const slot = this.sizeSlotImage(p.gender, this.selectedSizeKey());
+    if (slot) return optimizedImage(slot, 1200);
+    // 3. the product's default image, then any gallery shot
     if (p.imageUrl) return optimizedImage(p.imageUrl, 1200);
     return this.images(p)[this.activeImg()] ?? this.images(p)[0];
   }

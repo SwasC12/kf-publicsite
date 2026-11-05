@@ -70,6 +70,34 @@
           <button type="submit" class="btn primary" [disabled]="cust.saving()">{{ cust.saving() ? 'Saving…' : 'Save details' }}</button>
         </form>
 
+        <h2 class="block-title">Refer a friend</h2>
+        <div class="referral-card">
+          @if (referral.info(); as r) {
+            <div class="ref-top">
+              <div>
+                <span class="ref-label">Your code</span>
+                <span class="ref-code">{{ r.code }}</span>
+              </div>
+              <button type="button" class="btn" (click)="copyRef(r.code)">{{ refCopied() ? 'Copied' : 'Copy code' }}</button>
+            </div>
+            <p class="ref-progress">
+              {{ r.count }} of 3 friends joined. Every 3 friends who order with your code earns you a
+              <strong>free 30 ml</strong> — it's added to your next order automatically.
+            </p>
+            @if (r.rewards > 0) {
+              <p class="ref-reward">You have {{ r.rewards }} free 30 ml waiting. It goes into your next order automatically.</p>
+            }
+          } @else if (referral.ineligible()) {
+            <p class="ref-progress">
+              <strong>Place your first order to join the referral programme.</strong>
+              Once your first order is paid we'll give you a code to share — every 3 friends who order
+              with it earns you a free 30 ml.
+            </p>
+          } @else {
+            <p class="ref-progress">{{ referral.loading() ? 'Loading your code…' : 'Sign in to get your personal referral code.' }}</p>
+          }
+        </div>
+
         <h2 class="block-title">Order history</h2>
         @if (cust.orders().length === 0) {
           <div class="notice"><app-icon name="package" [size]="36" /><p>No orders yet. <a routerLink="/">Start shopping</a>.</p></div>

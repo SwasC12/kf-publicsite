@@ -26,6 +26,7 @@ export class OrdersService {
     discountCode?: string,
     _discountAmount = 0,
     paymentMethod: 'eft' | 'yoco' = 'yoco',
+    referralCode = '',
   ): Promise<Order | null> {
     if (!items.length) return null;
     this.placing.set(true);
@@ -46,6 +47,7 @@ export class OrdersService {
           deliveryMethod,
           items: items.map((i) => ({ productId: i.productId, sizeKey: i.sizeKey || '', qty: i.qty })),
           discountCode: discountCode || '',
+          referralCode: referralCode || '',
           paymentMethod,
         }),
       });

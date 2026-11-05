@@ -1007,3 +1007,15 @@ img { max-width: 100%; height: auto; }
   .icon-btn, .fav-btn, .qbtn { min-width: 44px; }
   input, select, textarea { font-size: 16px; }
 }
+
+/* ---------- Referral card ---------- */
+.referral-card {
+  background: var(--surface); border-radius: 12px; box-shadow: var(--shadow);
+  padding: 16px 18px; margin-bottom: 26px;
+}
+.ref-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.ref-label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); font-weight: 700; }
+.ref-code { display: block; font-size: 22px; font-weight: 800; letter-spacing: 0.1em; margin-top: 2px; }
+.ref-progress { font-size: 13.5px; line-height: 1.6; color: var(--ink-dim); margin: 10px 0 0; }
+.ref-reward { font-size: 13.5px; font-weight: 700; margin: 10px 0 0; color: var(--accent-dark); }
+@media (max-width: 560px) { .ref-top .btn { width: 100%; justify-content: center; } }

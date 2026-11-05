@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '@core/services/auth.service';
 import { CustomerService } from '@core/services/customer.service';
+import { ReferralService } from '@core/services/referral.service';
 import { EmailService } from '@core/services/email.service';
 import { IconComponent } from '@shared/components/icon/icon.component';
 import { Address, emptyAddress } from '@core/models';
@@ -19,6 +20,7 @@ import { formatPrice } from '@core/utils';
 export class AccountComponent {
   readonly auth = inject(AuthService);
   readonly cust = inject(CustomerService);
+  readonly referral = inject(ReferralService);
   private emailSvc = inject(EmailService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
@@ -34,6 +36,7 @@ export class AccountComponent {
   readonly saved = signal(false);
   readonly resetSent = signal(false);
   readonly verifySent = signal(false);
+  readonly refCopied = signal(false);
 
   price = formatPrice;
 
@@ -48,13 +51,23 @@ export class AccountComponent {
       }
     });
     // Always show fresh statuses/tracking when the account page opens.
-    if (this.auth.isLoggedIn()) void this.cust.refresh();
+    if (this.auth.isLoggedIn()) {
+      void this.cust.refresh();
+      void this.referral.load();
+    }
   }
 
   toggle(): void {
     this.mode.update((m) => (m === 'in' ? 'up' : 'in'));
     this.auth.error.set(null);
     this.resetSent.set(false);
+  }
+
+  copyRef(code: string): void {
+    navigator.clipboard?.writeText(code).then(
+      () => { this.refCopied.set(true); setTimeout(() => this.refCopied.set(false), 1800); },
+      () => {},
+    );
   }
 
   async verifyEmail(): Promise<void> {

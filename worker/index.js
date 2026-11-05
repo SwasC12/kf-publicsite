@@ -45,6 +45,7 @@ export default {
       if (url.pathname === "/api/lookup-order") return cors(await handleLookupOrder(request, env), request);
       if (url.pathname === "/api/my-orders") return cors(await handleMyOrders(request, env), request);
       if (url.pathname === "/api/confirm-payment") return cors(await handleConfirmPayment(request, env), request);
+      if (url.pathname === "/api/referral/me") return cors(await handleMyReferral(request, env), request);
       if (url.pathname === "/api/request-password-reset") return cors(await handleRequestPasswordReset(request, env), request);
       if (url.pathname === "/api/reset-password") return cors(await handleResetPassword(request, env), request);
       if (url.pathname === "/api/yoco/webhook") return await handleYocoWebhook(request, env);
@@ -508,6 +509,34 @@ async function settleOrderPaid(env, order, paymentId) {
     updatedAt: now,
   });
 
+  // Referral bookkeeping — only ever for orders Yoco confirmed as paid.
+  try {
+    if (current.referralCode && !current.referralCounted) {
+      const rd = await fs.get("referrals/" + current.referralCode);
+      if (rd && rd.data) {
+        const total = Number(rd.data.count || 0) + 1;
+        const earned = total >= 3 ? 1 : 0;
+        await fs.patch("referrals/" + current.referralCode, {
+          count: total >= 3 ? total - 3 : total,
+          rewards: Number(rd.data.rewards || 0) + earned,
+          lifetime: Number(rd.data.lifetime || 0) + 1,
+          updatedAt: now,
+        });
+      }
+      await fs.patch("orders/" + id, { referralCounted: true });
+    }
+    if (current.referralRewardApplied && !current.referralRewardCounted && current.uid) {
+      const mine = await fs.query("referrals", "uid", "EQUAL", current.uid, 1);
+      if (mine && mine[0]) {
+        await fs.patch("referrals/" + mine[0].id, {
+          rewards: Math.max(0, Number(mine[0].rewards || 0) - 1),
+          updatedAt: now,
+        });
+      }
+      await fs.patch("orders/" + id, { referralRewardCounted: true });
+    }
+  } catch (e) { /* never block a confirmed payment */ }
+
   if (env.RESEND_API_KEY && current.customer && current.customer.email) {
     try {
       await sendEmail(env, {
@@ -776,9 +805,79 @@ async function handleValidatePromo(request, env) {
   }
 }
 
+
+// ---------- Referrals ----------
+const REF_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function referralCode() {
+  let out = "";
+  const buf = new Uint8Array(6);
+  crypto.getRandomValues(buf);
+  for (let i = 0; i < 6; i++) out += REF_ALPHABET[buf[i] % REF_ALPHABET.length];
+  return "KF" + out;
+}
+
+/** The signed-in customer's referral code, created on first view. */
+async function handleMyReferral(request, env) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT) return json({ error: "Referrals are temporarily unavailable." }, 503);
+  if (!rateLimit("refme:" + clientIp(request), 30, 60000)) return json({ error: "Too many requests." }, 429);
+  const auth = request.headers.get("Authorization") || "";
+  if (auth.indexOf("Bearer ") !== 0) return json({ error: "Please sign in." }, 401);
+  const user = await verifyIdToken(env, auth.slice(7));
+  if (!user || !user.localId) return json({ error: "Please sign in again." }, 401);
+
+  try {
+    const fs = new Firestore(env);
+    // Referrals unlock after the first paid order, so brand-new accounts can't
+    // hand out codes (and can't be farmed for free bottles).
+    const mine = await fs.query("orders", "uid", "EQUAL", user.localId, 50);
+    const paidStatuses = ["paid", "fulfilled", "shipped", "delivered"];
+    const hasPaid = mine.some(function (o) { return paidStatuses.indexOf(String(o.status)) >= 0; });
+    if (!hasPaid) {
+      return json({ ok: true, eligible: false, message: "Place your first order to join the referral programme." });
+    }
+    const found = await fs.query("referrals", "uid", "EQUAL", user.localId, 1);
+    let doc = found && found[0];
+    if (!doc) {
+      let code = referralCode();
+      for (let i = 0; i < 5; i++) {
+        const taken = await fs.get("referrals/" + code);
+        if (!taken) break;
+        code = referralCode();
+      }
+      await fs.patch("referrals/" + code, {
+        code: code,
+        uid: user.localId,
+        email: String(user.email || "").toLowerCase(),
+        name: String(user.displayName || ""),
+        count: 0,
+        rewards: 0,
+        lifetime: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      doc = { id: code, code: code, count: 0, rewards: 0, lifetime: 0 };
+    }
+    return json({
+      ok: true,
+      code: doc.code || doc.id,
+      count: Number(doc.count || 0),
+      rewards: Number(doc.rewards || 0),
+      lifetime: Number(doc.lifetime || 0),
+    });
+  } catch (e) {
+    return json({ error: "Could not load your referral code." }, 500);
+  }
+}
+
 async function handlePlaceOrder(request, env) {
   if (!env.FIREBASE_SERVICE_ACCOUNT) {
     return json({ error: "Online ordering is temporarily unavailable. Please contact us." }, 503);
+  }
+  // Cheap throttle: without it a bot can create endless pending orders and lock
+  // up stock (every pending order reserves inventory for 30 minutes).
+  if (!rateLimit("order:" + clientIp(request), 10, 600000)) {
+    return json({ error: "Too many order attempts. Please wait a few minutes." }, 429);
   }
 
   let body;
@@ -798,6 +897,9 @@ async function handlePlaceOrder(request, env) {
   const rawItems = Array.isArray(body.items) ? body.items : [];
   const name = String(contact.name || "").trim().slice(0, 120);
   const email = String(contact.email || "").trim().slice(0, 200);
+  if (email && !rateLimit("orderemail:" + email.toLowerCase(), 6, 3600000)) {
+    return json({ error: "Too many orders from this email in the last hour. Please contact us if this is a mistake." }, 429);
+  }
   const phone = String(contact.phone || "").trim().slice(0, 40);
   const note = String(contact.note || "").trim().slice(0, 1000);
 
@@ -826,6 +928,22 @@ async function handlePlaceOrder(request, env) {
     if (user) uid = user.localId || null;
   }
 
+  let referral = null;
+  const rawRef = String(body.referralCode || "").trim().toUpperCase().slice(0, 20);
+  if (rawRef) {
+    try {
+      const doc = await new Firestore(env).get("referrals/" + rawRef);
+      if (!doc) return json({ error: "That referral code doesn't exist." }, 400);
+      const owner = doc.data;
+      const samePerson = (uid && owner.uid === uid) ||
+        (email && String(owner.email || "").toLowerCase() === email.toLowerCase());
+      if (samePerson) return json({ error: "You can't use your own referral code." }, 400);
+      referral = { code: rawRef, ownerUid: owner.uid || null };
+    } catch (e) {
+      return json({ error: "Could not check that referral code." }, 500);
+    }
+  }
+
   try {
     const result = await new Firestore(env).placeOrder({
       name: name,
@@ -838,6 +956,8 @@ async function handlePlaceOrder(request, env) {
       items: items,
       code: String(body.discountCode || "").trim().toUpperCase().slice(0, 40),
       uid: uid,
+      referralCode: referral ? referral.code : "",
+      referralOwnerUid: referral ? referral.ownerUid : null,
     });
     if (paymentMethod === "yoco") {
       try {
@@ -1107,6 +1227,34 @@ class Firestore {
       rows.push({ line: line, product: p, doc: doc, sizeKey: sizeKey, size: chosen, unitPrice: unit });
     }
 
+    // Referral reward: a free 30 ml of the cheapest fragrance in the basket.
+    // Applied here so packing is obvious; the reward is only consumed on payment.
+    let giftApplied = false;
+    if (input.uid) {
+      try {
+        const mine = await this.query("referrals", "uid", "EQUAL", input.uid, 1);
+        const refDoc = mine && mine[0];
+        if (refDoc && Number(refDoc.rewards || 0) > 0) {
+          const ordered = rows.slice().sort(function (a, b) { return a.unitPrice - b.unitPrice; });
+          for (const cand of ordered) {
+            const thirty = cand.product.sizes && cand.product.sizes.size30;
+            if (!thirty || thirty.inStock === false || !(Number(thirty.price) > 0)) continue;
+            rows.push({
+              line: { productId: cand.line.productId, sizeKey: "size30", qty: 1 },
+              product: cand.product,
+              doc: cand.doc,
+              sizeKey: "size30",
+              size: thirty,
+              unitPrice: 0,
+              gift: true,
+            });
+            giftApplied = true;
+            break;
+          }
+        }
+      } catch (e) { /* reward is best-effort, never blocks an order */ }
+    }
+
     const subtotal = round2(rows.reduce(function (sum, r) { return sum + r.unitPrice * r.line.qty; }, 0));
     let fee = input.method === "collection" ? 0 : Number(cfg.deliveryFee || 0);
     const threshold = cfg.freeDeliveryThreshold == null ? null : Number(cfg.freeDeliveryThreshold);
@@ -1163,11 +1311,16 @@ class Firestore {
           size: r.size ? r.size.size : (r.product.size || undefined),
           price: r.unitPrice,
           qty: r.line.qty,
+          isGift: r.gift || undefined,
         };
       }),
       total: total,
       status: "pending",
       channel: "online",
+      referralCode: input.referralCode || undefined,
+      referralOwnerUid: input.referralOwnerUid || undefined,
+      referralRewardApplied: giftApplied || undefined,
+      referralCounted: false,
       stockReserved: true,
       stockRestored: false,
       discountCounted: false,
