@@ -81,8 +81,8 @@
               <button type="button" class="btn" (click)="copyRef(r.code)">{{ refCopied() ? 'Copied' : 'Copy code' }}</button>
             </div>
             <p class="ref-progress">
-              {{ r.count }} of 3 friends joined. Every 3 friends who order with your code earns you a
-              <strong>free 30 ml</strong> — it's added to your next order automatically.
+              {{ r.count }} of 3 people have used your code. Once 3 different people have used it, a
+              <strong>free 30 ml</strong> is added to your next order automatically.
             </p>
             @if (r.rewards > 0) {
               <p class="ref-reward">You have {{ r.rewards }} free 30 ml waiting. It goes into your next order automatically.</p>

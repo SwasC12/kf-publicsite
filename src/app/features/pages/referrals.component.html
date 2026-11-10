@@ -1,0 +1,72 @@
+<article class="refer-page">
+  <section class="refer-hero">
+    <span class="refer-eyebrow">Refer a friend</span>
+    <h1>Share the scent.<br />Earn a free 30 ml.</h1>
+    <p class="refer-lede">
+      Share your personal code. Once <strong>three different people</strong> have used it, your next
+      order includes a <strong>free 30 ml</strong> — automatically, no claiming, no admin.
+    </p>
+  </section>
+
+  <section class="refer-steps">
+    <div class="refer-step">
+      <span class="refer-num">1</span>
+      <h3>Share your code</h3>
+      <p>Every customer gets a personal code after their first paid order.</p>
+    </div>
+    <div class="refer-step">
+      <span class="refer-num">2</span>
+      <h3>They use your code</h3>
+      <p>Each friend can count once — they enter your code in the referral field at checkout.</p>
+    </div>
+    <div class="refer-step">
+      <span class="refer-num">3</span>
+      <h3>You get 30 ml</h3>
+      <p>On the third different person, a free 30 ml is added to your next order — we do it for you.</p>
+    </div>
+  </section>
+
+  <section class="refer-panel">
+    @if (referral.info(); as r) {
+      <span class="refer-panel-label">Your code</span>
+      <div class="refer-code-row">
+        <span class="refer-code">{{ r.code }}</span>
+        <button type="button" class="btn primary" (click)="copy(r.code)">{{ copied() ? 'Copied' : 'Copy code' }}</button>
+      </div>
+      <div class="refer-share">
+        <button type="button" class="btn" (click)="shareWhatsApp(r.code)">Share on WhatsApp</button>
+        <button type="button" class="btn" (click)="shareEmail(r.code)"><app-icon name="mail" [size]="16" /> Email it</button>
+      </div>
+      <p class="refer-progress">
+        <strong>{{ r.count }} of 3</strong> people have used your code.
+        @if (r.rewards > 0) { You have <strong>{{ r.rewards }} free 30 ml</strong> waiting on your next order. }
+      </p>
+    } @else if (referral.ineligible()) {
+      <span class="refer-panel-label">Not joined yet</span>
+      <p class="refer-progress">
+        <strong>Place your first order to join the referral programme.</strong>
+        Once your first order is paid we'll give you a code to share — every three friends who order
+        with it earns you a free 30 ml.
+      </p>
+      <a class="btn primary" routerLink="/">Shop fragrances</a>
+    } @else if (!auth.isLoggedIn()) {
+      <span class="refer-panel-label">Get your code</span>
+      <p class="refer-progress">Sign in to your account to see your personal referral code.</p>
+      <a class="btn primary" routerLink="/account" [queryParams]="{ return: '/referrals' }">Sign in</a>
+    } @else {
+      <p class="refer-progress">Loading your code…</p>
+    }
+  </section>
+
+  <section class="refer-faq">
+    <h2>Good to know</h2>
+    <ul>
+      <li>Codes unlock after your first paid order.</li>
+      <li>Your friend enters your code at checkout — it can't be applied after the order is placed.</li>
+      <li>A referral counts once their payment clears, not when the order is placed.</li>
+      <li>It's three different people — one person using your code twice still counts once.</li>
+      <li>On the third, you get one free 30 ml of the cheapest fragrance in your next basket, added automatically.</li>
+      <li>You can't use your own code.</li>
+    </ul>
+  </section>
+</article>

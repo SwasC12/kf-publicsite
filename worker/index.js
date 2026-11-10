@@ -46,6 +46,7 @@ export default {
       if (url.pathname === "/api/my-orders") return cors(await handleMyOrders(request, env), request);
       if (url.pathname === "/api/confirm-payment") return cors(await handleConfirmPayment(request, env), request);
       if (url.pathname === "/api/referral/me") return cors(await handleMyReferral(request, env), request);
+      if (url.pathname === "/api/device-token") return cors(await handleDeviceToken(request, env), request);
       if (url.pathname === "/api/request-password-reset") return cors(await handleRequestPasswordReset(request, env), request);
       if (url.pathname === "/api/reset-password") return cors(await handleResetPassword(request, env), request);
       if (url.pathname === "/api/yoco/webhook") return await handleYocoWebhook(request, env);
@@ -514,12 +515,22 @@ async function settleOrderPaid(env, order, paymentId) {
     if (current.referralCode && !current.referralCounted) {
       const rd = await fs.get("referrals/" + current.referralCode);
       if (rd && rd.data) {
-        const total = Number(rd.data.count || 0) + 1;
-        const earned = total >= 3 ? 1 : 0;
+        // Count unique people, not orders: the same friend ordering twice must
+        // not count twice toward the three.
+        const key = String(
+          current.uid || (current.customer && current.customer.email) || "",
+        ).toLowerCase();
+        const referees = Array.isArray(rd.data.referees)
+          ? rd.data.referees.map(function (x) { return String(x).toLowerCase(); })
+          : [];
+        if (key && referees.indexOf(key) < 0) referees.push(key);
+        const unique = referees.length;
+        const earned = unique > 0 && unique % 3 === 0 ? 1 : 0;
         await fs.patch("referrals/" + current.referralCode, {
-          count: total >= 3 ? total - 3 : total,
+          referees: referees,
+          count: unique % 3,
           rewards: Number(rd.data.rewards || 0) + earned,
-          lifetime: Number(rd.data.lifetime || 0) + 1,
+          lifetime: unique,
           updatedAt: now,
         });
       }
@@ -853,6 +864,7 @@ async function handleMyReferral(request, env) {
         count: 0,
         rewards: 0,
         lifetime: 0,
+        referees: [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
@@ -868,6 +880,89 @@ async function handleMyReferral(request, env) {
   } catch (e) {
     return json({ error: "Could not load your referral code." }, 500);
   }
+}
+
+
+// ---------- Push notifications (FCM v1) ----------
+
+async function fcmAccessToken(env) {
+  const sa = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT);
+  const now = Math.floor(Date.now() / 1000);
+  const enc = function (obj) { return b64url(new TextEncoder().encode(JSON.stringify(obj))); };
+  const unsigned = enc({ alg: "RS256", typ: "JWT" }) + "." + enc({
+    iss: sa.client_email,
+    scope: "https://www.googleapis.com/auth/firebase.messaging",
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+  });
+  const key = await importPrivateKey(sa.private_key);
+  const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned));
+  const jwt = unsigned + "." + b64url(new Uint8Array(sig));
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=" + encodeURIComponent(jwt),
+  });
+  const data = await res.json().catch(function () { return {}; });
+  return data.access_token || null;
+}
+
+/** Register an Android device token (admin only). */
+async function handleDeviceToken(request, env) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT) return json({ error: "Unavailable" }, 503);
+  const auth = request.headers.get("Authorization") || "";
+  if (auth.indexOf("Bearer ") !== 0) return json({ error: "Sign in required" }, 401);
+  const user = await verifyIdToken(env, auth.slice(7));
+  if (!user || !env.ADMIN_UID || user.localId !== env.ADMIN_UID) {
+    return json({ error: "Forbidden" }, 403);
+  }
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Bad request" }, 400); }
+  const token = String(body.token || "").trim().slice(0, 400);
+  if (!token) return json({ error: "Missing token" }, 400);
+  try {
+    await new Firestore(env).patch("devices/" + token, {
+      token: token,
+      platform: "android",
+      updatedAt: Date.now(),
+    });
+    return json({ ok: true });
+  } catch (e) {
+    return json({ error: "Could not store the device" }, 500);
+  }
+}
+
+/** Push to every registered device. Best-effort, never blocks an order. */
+async function sendPush(env, title, body, channel) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT) return;
+  try {
+    const fs = new Firestore(env);
+    const devices = await fs.query("devices", "platform", "EQUAL", "android", 50);
+    if (!devices || !devices.length) return;
+    const access = await fcmAccessToken(env);
+    if (!access) return;
+    await Promise.all(devices.map(function (d) {
+      if (!d.token) return null;
+      return fetch("https://fcm.googleapis.com/v1/projects/" + fs.project + "/messages:send", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + access, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: {
+            token: d.token,
+            notification: { title: title, body: body },
+            android: {
+              priority: "high",
+              notification: {
+                channel_id: channel || "orders",
+                sound: channel === "inventory" ? "notification_inventory" : "notification_order",
+              },
+            },
+          },
+        }),
+      }).catch(function () { return null; });
+    }));
+  } catch (e) { /* push is best-effort */ }
 }
 
 async function handlePlaceOrder(request, env) {
@@ -959,6 +1054,16 @@ async function handlePlaceOrder(request, env) {
       referralCode: referral ? referral.code : "",
       referralOwnerUid: referral ? referral.ownerUid : null,
     });
+    try {
+      await sendPush(
+        env,
+        "New order " + result.order.reference,
+        (result.order.customer && result.order.customer.name ? result.order.customer.name : "A customer") +
+          " · R" + result.order.total,
+        "orders",
+      );
+    } catch (e) { /* push is best-effort */ }
+
     if (paymentMethod === "yoco") {
       try {
         const yoco = await startYocoCheckout(env, result.order);

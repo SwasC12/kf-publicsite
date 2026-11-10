@@ -4,3 +4,4 @@ export * from './faq.component';
 export * from './contact.component';
 export * from './terms.component';
 export * from './privacy.component';
+export * from './referrals.component';

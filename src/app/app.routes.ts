@@ -7,7 +7,7 @@ import { ConfirmationComponent } from '@features/checkout/confirmation.component
 import { AccountComponent } from '@features/account/account.component';
 import { TrackComponent } from '@features/track/track.component';
 import { SavedComponent } from '@features/saved/saved.component';
-import { AboutComponent, ShippingComponent, FaqComponent, ContactComponent, TermsComponent, PrivacyComponent } from '@features/pages';
+import { AboutComponent, ShippingComponent, FaqComponent, ContactComponent, TermsComponent, PrivacyComponent, ReferralsComponent } from '@features/pages';
 import { ResetPasswordComponent } from '@features/account/reset-password.component';
 
 export const routes: Routes = [
@@ -17,6 +17,7 @@ export const routes: Routes = [
   { path: 'cart', component: CartComponent, title: 'Cart · Kauā Fragrances' },
   { path: 'checkout', component: CheckoutComponent, title: 'Checkout · Kauā Fragrances' },
   { path: 'account', component: AccountComponent, title: 'My account · Kauā Fragrances' },
+  { path: 'referrals', component: ReferralsComponent, title: 'Refer a friend · Kauā Fragrances' },
   { path: 'track', component: TrackComponent, title: 'Track order · Kauā Fragrances' },
   { path: 'about', component: AboutComponent, title: 'About · Kauā Fragrances' },
   { path: 'shipping', component: ShippingComponent, title: 'Shipping & Returns · Kauā Fragrances' },
