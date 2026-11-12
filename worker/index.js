@@ -33,7 +33,8 @@ export default {
       // /api/send-email is protected by a Firebase ID token (welcome) or an
       // admin token/key (status/restock), so it may be called from the admin app
       // on its own domain. Public order/promo endpoints stay origin-locked.
-      if (url.pathname !== "/api/send-email" && !originAllowed(origin, env)) {
+      // /api/cloudinary-sign is admin-token protected in the same way.
+      if (url.pathname !== "/api/send-email" && url.pathname !== "/api/cloudinary-sign" && !originAllowed(origin, env)) {
         return json({ error: "Origin not allowed" }, 403);
       }
       if (url.pathname === "/api/yoco/webhook" && (request.method === "GET" || request.method === "HEAD")) {
@@ -57,6 +58,7 @@ export default {
       if (url.pathname === "/api/reset-password") return cors(await handleResetPassword(request, env), request);
       if (url.pathname === "/api/yoco/webhook") return await handleYocoWebhook(request, env);
       if (url.pathname === "/api/send-email") return cors(await handleSend(request, env), request);
+      if (url.pathname === "/api/cloudinary-sign") return cors(await handleCloudinarySign(request, env), request);
       return cors(json({ error: "Not found" }, 404), request);
     }
     if (url.pathname === "/sitemap.xml") {
@@ -143,6 +145,28 @@ async function adminAuthorized(request, env) {
     if (user && user.localId === env.ADMIN_UID) return true;
   }
   return false;
+}
+
+/**
+ * Sign a Cloudinary upload for the admin app. The upload preset is in signed
+ * mode, so the browser cannot upload by itself. Admin Firebase token only.
+ * Worker secrets: CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.
+ */
+async function handleCloudinarySign(request, env) {
+  if (!env.CLOUDINARY_API_KEY || !env.CLOUDINARY_API_SECRET) return json({ error: "Uploads not configured" }, 503);
+  if (!(await adminAuthorized(request, env))) return json({ error: "Forbidden" }, 403);
+  let body;
+  try { body = await request.json(); } catch (e) { body = {}; }
+  const folder = String(body.folder || "kaua/products");
+  if (!/^kaua(\/[a-z0-9_-]{1,40}){0,3}$/i.test(folder)) return json({ error: "Bad folder" }, 400);
+  const preset = String(body.uploadPreset || "kaua_unsigned");
+  if (!/^[a-z0-9_-]{1,64}$/i.test(preset)) return json({ error: "Bad preset" }, 400);
+  const timestamp = Math.floor(Date.now() / 1000);
+  // Cloudinary: SHA-1 of the alphabetically sorted params, then the API secret.
+  const toSign = "folder=" + folder + "&timestamp=" + timestamp + "&upload_preset=" + preset + env.CLOUDINARY_API_SECRET;
+  const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(toSign));
+  const signature = Array.from(new Uint8Array(digest), function (x) { return x.toString(16).padStart(2, "0"); }).join("");
+  return json({ signature: signature, timestamp: timestamp, apiKey: env.CLOUDINARY_API_KEY, folder: folder, uploadPreset: preset });
 }
 
 async function handleSend(request, env) {
