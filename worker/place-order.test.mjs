@@ -12,9 +12,10 @@ const pem = '-----BEGIN PRIVATE KEY-----\n' + b64 + '\n-----END PRIVATE KEY-----
 const sa = JSON.stringify({ project_id: 'test-project', client_email: 'svc@test.iam.gserviceaccount.com', private_key: pem });
 
 const products = {
-  p1: { name: { stringValue: 'Olympea' }, price: { integerValue: '100' }, stockQty: { integerValue: '5' }, inStock: { booleanValue: true }, active: { booleanValue: true }, size: { stringValue: '50ml' } },
+  p1: { gender: { stringValue: 'Women' }, category: { stringValue: 'Floral' }, name: { stringValue: 'Olympea' }, price: { integerValue: '100' }, stockQty: { integerValue: '5' }, inStock: { booleanValue: true }, active: { booleanValue: true }, size: { stringValue: '50ml' } },
   p2: { name: { stringValue: 'Chloe' }, price: { integerValue: '50' }, stockQty: { integerValue: '1' }, inStock: { booleanValue: true }, active: { booleanValue: true } },
   p3: {
+    gender: { stringValue: 'Men' }, category: { stringValue: 'Oud' },
     name: { stringValue: 'Sized Scent' }, price: { integerValue: '100' }, inStock: { booleanValue: true }, active: { booleanValue: true },
     sizes: { mapValue: { fields: {
       size30: { mapValue: { fields: { size: { stringValue: '30ml' }, price: { integerValue: '100' }, stockQty: { integerValue: '5' }, inStock: { booleanValue: true } } } },
@@ -37,6 +38,27 @@ const discount = {
 };
 
 let calls = [];
+let queries = [];
+let historyOrders = [];
+const I = (n) => ({ integerValue: String(n) });
+const B = (b) => ({ booleanValue: b });
+const A = (xs) => ({ arrayValue: { values: xs.map((x) => ({ stringValue: x })) } });
+const D = (extra) => Object.assign({ active: B(true), type: { stringValue: 'percent' }, value: I(0), mechanic: { stringValue: 'order' }, usedCount: I(0) }, extra);
+const extraDiscounts = {
+  LATER: D({ value: I(10), startsAt: I(Date.now() + 86400000 * 3) }),
+  STARTED: D({ value: I(10), startsAt: I(Date.now() - 1000) }),
+  FREESHIP: D({ type: { stringValue: 'fixed' }, value: I(0), freeDelivery: B(true), maxUses: I(50) }),
+  B2G1: D({ mechanic: { stringValue: 'bundle' }, bundleQty: I(3), bundleReward: { stringValue: 'free' }, bundleFree: I(1) }),
+  B3G1HALF: D({ mechanic: { stringValue: 'bundle' }, bundleQty: I(4), bundleReward: { stringValue: 'free' }, bundleFree: I(1), bundleFreePercent: I(50) }),
+  ONLYP1: D({ mechanic: { stringValue: 'item' }, value: I(10), productIds: A(['p1']) }),
+  WOMEN: D({ value: I(10), gender: { stringValue: 'women' } }),
+  OUD: D({ value: I(10), category: { stringValue: 'oud' } }),
+  FIFTY: D({ mechanic: { stringValue: 'item' }, type: { stringValue: 'fixed' }, value: I(20), sizeKeys: A(['size50']) }),
+  TWOPLUS: D({ value: I(10), minQty: I(2) }),
+  CAPPED: D({ value: I(50), maxDiscount: I(15) }),
+  ONCE: D({ value: I(10), oncePerCustomer: B(true) }),
+  FIRST: D({ value: I(10), firstOrderOnly: B(true) }),
+};
 let lastCommit = null;
 let patches = [];
 let yocoStatus = 'completed';
@@ -56,12 +78,26 @@ globalThis.fetch = async function (input, opts) {
   if (url.includes('/products/p2')) return json({ name: 'products/p2', updateTime: 't1', fields: products.p2 });
   if (url.includes('/products/p3')) return json({ name: 'products/p3', updateTime: 't1', fields: products.p3 });
   if (url.includes('/discounts/SAVE10')) return json({ name: 'discounts/SAVE10', updateTime: 't1', fields: discount });
+  const dm = url.match(/\/discounts\/([A-Z0-9]+)/);
+  if (dm && extraDiscounts[dm[1]]) return json({ name: 'discounts/' + dm[1], updateTime: 't1', fields: extraDiscounts[dm[1]] });
   if (url.includes('/discounts/')) return json({ error: { code: 404, message: 'not found', status: 'NOT_FOUND' } }, 404);
   if (url.includes('/orderStatus/')) return json({ error: { code: 404, message: 'not found', status: 'NOT_FOUND' } }, 404);
   if (url.includes('payments.yoco.com/api/checkouts/')) return json({ id: 'ch_1', status: yocoStatus });
   if (url.includes('payments.yoco.com/api/checkouts')) return json({ id: 'ch_1', redirectUrl: 'https://pay.yoco.com/c/ch_1' });
   if (opts && opts.method === 'PATCH') { patches.push({ url, body: JSON.parse(opts.body) }); return json({}); }
-  if (url.includes(':runQuery')) return json([]);
+  if (url.includes(':runQuery')) {
+    const q = JSON.parse(opts.body);
+    queries.push(q);
+    const ff = q.structuredQuery.where.fieldFilter;
+    if (q.structuredQuery.from[0].collectionId !== 'orders') return json([]);
+    const want = ff.value.stringValue;
+    const rows = historyOrders.filter((o) => (ff.field.fieldPath === 'uid' ? o.uid === want : o.email === want));
+    return json(rows.map((o) => ({ document: { name: 'x/orders/' + o.id, fields: {
+      id: S(o.id), status: S(o.status), discountCode: o.code ? S(o.code) : { nullValue: null },
+      uid: o.uid ? S(o.uid) : { nullValue: null },
+      customer: { mapValue: { fields: { email: S(o.email || '') } } },
+    } } })));
+  }
   const od = url.match(/\/orders\/(ord_[a-z]+)/);
   if (od && orderDocs[od[1]]) return json({ name: 'orders/' + od[1], updateTime: 't1', fields: orderDocs[od[1]] });
   if (url.endsWith(':beginTransaction')) return json({ transaction: 'tx1' });
@@ -234,6 +270,113 @@ res = await worker.fetch(request('/api/confirm-payment', { orderId: 'ord_admincx
 data = await res.json();
 check('admin-cancelled stays cancelled', data.status === 'cancelled' && !lastCommit, data);
 check('admin-cancelled payment flagged', patches.some((x) => x.url.includes('/orders/ord_admincx') && x.body.fields.paymentReceivedWhileCancelled), patches.map((x) => x.url));
+
+// ---------- New discount options ----------
+let ipN = 0;
+const freshIp = () => ({ 'CF-Connecting-IP': '10.0.0.' + (++ipN) });
+let mailN = 0;
+async function order(code, items, extra = {}) {
+  calls = []; lastCommit = null; queries = [];
+  const r = await worker.fetch(request('/api/place-order', {
+    contact: { name: 'Test Buyer', email: extra.email || ('promo' + (++mailN) + '@example.com'), phone: '0821234567' },
+    delivery: { line1: '1 Main St', city: 'Cape Town' },
+    deliveryMethod: extra.method || 'delivery',
+    items, discountCode: code,
+  }, { ...freshIp(), ...(extra.headers || {}) }), env);
+  return { res: r, data: await r.json() };
+}
+async function promo(code, items, headers = {}) {
+  const r = await worker.fetch(request('/api/validate-promo', { code, items }, { ...freshIp(), ...headers }), env);
+  return { res: r, data: await r.json() };
+}
+const usedCountWritten = () => !!lastCommit && lastCommit.writes.some((w) => w.update && w.update.fields && w.update.fields.usedCount);
+let o, v;
+
+// 13. Start date.
+v = await promo('later', [{ productId: 'p1', qty: 1 }]);
+check('startsAt: promo not valid yet', v.res.status === 400 && /only valid from \d+ [A-Z][a-z]{2} \d{4}/.test(v.data.error || ''), v.data);
+o = await order('LATER', [{ productId: 'p1', qty: 1 }]);
+check('startsAt: order rejected before start', o.res.status === 400 && /only valid from/.test(o.data.error || ''), o.data);
+o = await order('STARTED', [{ productId: 'p1', qty: 1 }]);
+check('startsAt: valid once started (100-10+60=150)', o.res.status === 200 && o.data.order.total === 150, o.data);
+
+// 14. Free delivery.
+v = await promo('freeship', [{ productId: 'p1', qty: 1 }]);
+check('free delivery: promo accepted with amount 0', v.res.status === 200 && v.data.amount === 0 && v.data.discount.freeDelivery === true, v.data);
+check('free delivery: public discount hides maxUses/usedCount', v.res.status === 200 && !('maxUses' in v.data.discount) && !('usedCount' in v.data.discount), v.data.discount);
+o = await order('FREESHIP', [{ productId: 'p1', qty: 1 }]);
+check('free delivery: fee 0, total 100', o.res.status === 200 && o.data.order.deliveryFee === 0 && o.data.order.total === 100, o.data.order);
+check('free delivery: waived fee recorded', o.data.order && o.data.order.deliveryDiscount === 60 && o.data.order.discountCode === 'FREESHIP', o.data.order);
+check('free delivery: use counted', usedCountWritten() && o.data.order.discountCounted === true);
+o = await order('FREESHIP', [{ productId: 'p1', qty: 1 }], { method: 'collection' });
+check('free delivery on collection: nothing to waive, use not counted', o.res.status === 200 && o.data.order.total === 100 && !usedCountWritten() && !o.data.order.discountCode, o.data.order);
+
+// 15. Buy X get Y.
+o = await order('B2G1', [{ productId: 'p1', qty: 3 }]);
+check('buy 2 get 1 free: 300-100+60=260', o.res.status === 200 && o.data.order.discountAmount === 100 && o.data.order.total === 260, o.data);
+o = await order('B3G1HALF', [{ productId: 'p1', qty: 4 }]);
+check('buy 3 get 1 half price: 50 off', o.res.status === 200 && o.data.order.discountAmount === 50, o.data);
+v = await promo('b2g1', [{ productId: 'p1', qty: 2 }]);
+check('buy 2 get 1: needs 3 items', v.res.status === 400 && /at least 3 items/.test(v.data.error || ''), v.data);
+
+// 16. Targeting.
+o = await order('ONLYP1', [{ productId: 'p1', qty: 1 }, { productId: 'p3', sizeKey: 'size30', qty: 1 }]);
+check('products: only p1 discounted (10)', o.res.status === 200 && o.data.order.discountAmount === 10, o.data);
+v = await promo('onlyp1', [{ productId: 'p3', sizeKey: 'size30', qty: 1 }]);
+check('products: other items rejected', v.res.status === 400 && /isn't valid for the items/.test(v.data.error || ''), v.data);
+o = await order('WOMEN', [{ productId: 'p1', qty: 1 }, { productId: 'p3', sizeKey: 'size30', qty: 1 }]);
+check('gender: order % on women items only (10)', o.res.status === 200 && o.data.order.discountAmount === 10, o.data);
+v = await promo('oud', [{ productId: 'p1', qty: 1 }, { productId: 'p3', sizeKey: 'size50', qty: 1 }]);
+check('category: oud line only (15)', v.res.status === 200 && v.data.amount === 15 && v.data.products && v.data.products.p3.category === 'Oud', v.data);
+o = await order('FIFTY', [{ productId: 'p3', sizeKey: 'size50', qty: 1 }, { productId: 'p3', sizeKey: 'size30', qty: 1 }]);
+check('size: only the 50ml discounted (20)', o.res.status === 200 && o.data.order.discountAmount === 20, o.data);
+v = await promo('fifty', [{ productId: 'p1', qty: 1 }]);
+check('size: unsized 50ml product label matches', v.res.status === 200 && v.data.amount === 20, v.data);
+
+// 17. Minimum quantity.
+v = await promo('twoplus', [{ productId: 'p1', qty: 1 }]);
+check('min qty: 1 item rejected', v.res.status === 400 && /at least 2 items/.test(v.data.error || ''), v.data);
+v = await promo('twoplus', [{ productId: 'p1', qty: 2 }]);
+check('min qty: 2 items ok', v.res.status === 200 && v.data.amount === 20, v.data);
+
+// 18. Cap.
+o = await order('CAPPED', [{ productId: 'p1', qty: 1 }]);
+check('cap: 50% capped at R15', o.res.status === 200 && o.data.order.discountAmount === 15 && o.data.order.total === 145, o.data);
+
+// 19. Once per customer.
+historyOrders = [
+  { id: 'h1', email: 'used@example.com', status: 'paid', code: 'ONCE' },
+  { id: 'h2', email: 'cancelled@example.com', status: 'cancelled', code: 'ONCE' },
+  { id: 'h3', uid: 'uid1', email: 'admin@example.com', status: 'delivered', code: 'SAVE10' },
+  { id: 'h4', email: 'pendingonly@example.com', status: 'pending', code: '' },
+];
+v = await promo('once', [{ productId: 'p1', qty: 1 }]);
+check('once: signed-out promo check asks to sign in', v.res.status === 400 && /sign in/i.test(v.data.error || ''), v.data);
+v = await promo('once', [{ productId: 'p1', qty: 1 }], adminAuth);
+check('once: signed-in customer who never used it is ok', v.res.status === 200 && v.data.amount === 10, v.data);
+o = await order('ONCE', [{ productId: 'p1', qty: 1 }], { email: 'used@example.com' });
+check('once: second use by email rejected', o.res.status === 400 && /already used/.test(o.data.error || ''), o.data);
+check('once: history read inside the transaction', queries.length > 0 && queries.every((q) => q.transaction === 'tx1'), queries.map((q) => q.transaction));
+o = await order('ONCE', [{ productId: 'p1', qty: 1 }], { email: 'USED@example.com' });
+check('once: email match ignores case', o.res.status === 400 && /already used/.test(o.data.error || ''), o.data);
+o = await order('ONCE', [{ productId: 'p1', qty: 1 }], { email: 'cancelled@example.com' });
+check('once: a cancelled earlier use does not count', o.res.status === 200, o.data);
+historyOrders.push({ id: 'h5', uid: 'uid1', email: 'other@example.com', status: 'pending', code: 'ONCE' });
+o = await order('ONCE', [{ productId: 'p1', qty: 1 }], { email: 'fresh@example.com', headers: adminAuth });
+check('once: matched by signed-in uid too', o.res.status === 400 && /already used/.test(o.data.error || ''), o.data);
+
+// 20. First order only.
+o = await order('FIRST', [{ productId: 'p1', qty: 1 }], { email: 'used@example.com' });
+check('first order: customer with a paid order rejected', o.res.status === 400 && /first order/.test(o.data.error || ''), o.data);
+o = await order('FIRST', [{ productId: 'p1', qty: 1 }], { email: 'pendingonly@example.com' });
+check('first order: unpaid history only is ok', o.res.status === 200 && o.data.order.discountAmount === 10, o.data);
+v = await promo('first', [{ productId: 'p1', qty: 1 }], adminAuth);
+check('first order: signed-in customer with delivered order rejected', v.res.status === 400 && /first order/.test(v.data.error || ''), v.data);
+historyOrders = [];
+
+// 21. Old codes are unchanged (no new fields -> same result as before).
+v = await promo('save10', [{ productId: 'p1', qty: 1 }, { productId: 'p3', sizeKey: 'size30', qty: 1 }]);
+check('old code: 10% of whole cart', v.res.status === 200 && v.data.amount === 20, v.data);
 
 console.log(failures === 0 ? 'ALL TESTS PASSED' : failures + ' TEST(S) FAILED');
 process.exit(failures === 0 ? 0 : 1);

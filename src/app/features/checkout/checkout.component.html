@@ -148,7 +148,11 @@
                 }
               </div>
               <div id="co-promo-msg" aria-live="polite">
-                @if (applied()) { <p class="field-ok"><app-icon name="check" [size]="14" /> {{ applied()!.code }} applied{{ discountAmount() > 0 ? ' — you save ' + price(discountAmount()) : '' }}</p> }
+                @if (applied()) { <p class="field-ok"><app-icon name="check" [size]="14" /> {{ applied()!.code }} applied{{ discountAmount() > 0 ? ' — you save ' + price(discountAmount()) : '' }}{{ freeDelivery() ? (discountAmount() > 0 ? ' + free delivery' : ' — free delivery') : '' }}</p>
+                  @if (applied()!.freeDelivery && !freeDelivery() && discountAmount() === 0) {
+                    <p class="ship-hint">{{ method() === 'collection' ? 'This code gives free delivery — it has no effect on collection.' : 'Delivery is already free on this order.' }}</p>
+                  }
+                }
                 @if (promoError()) { <p class="field-error">{{ promoError() }}</p> }
               </div>
             </div>
@@ -216,7 +220,11 @@
           </ul>
           <dl class="totals">
             <div><dt>Subtotal</dt><dd>{{ price(cart.total()) }}</dd></div>
-            <div><dt>{{ method() === 'collection' ? 'Collection' : 'Delivery' }}</dt><dd>{{ fee() === 0 ? 'Free' : price(fee()) }}</dd></div>
+            @if (freeDelivery()) {
+              <div class="saving"><dt>Delivery ({{ applied()!.code }})</dt><dd><s>{{ price(baseFee()) }}</s> Free</dd></div>
+            } @else {
+              <div><dt>{{ method() === 'collection' ? 'Collection' : 'Delivery' }}</dt><dd>{{ fee() === 0 ? 'Free' : price(fee()) }}</dd></div>
+            }
             @if (discountAmount() > 0) { <div class="saving"><dt>Discount ({{ applied()!.code }})</dt><dd>−{{ price(discountAmount()) }}</dd></div> }
             <div class="grand"><dt>Total</dt><dd>{{ price(grandTotal()) }}</dd></div>
           </dl>

@@ -7,7 +7,8 @@ import { AuthService } from '@core/services/auth.service';
 import { CustomerService } from '@core/services/customer.service';
 import { SettingsService } from '@core/services/settings.service';
 import { Address, DeliveryMethod, Discount, emptyAddress } from '@core/models';
-import { discountError, computeDiscount, DiscountLine } from '@core/utils/discount';
+import { discountError, computeDiscount, givesFreeDelivery, DiscountLine } from '@core/utils/discount';
+import { getAuthInstance } from '@core/firebase/firebase';
 import { SA_PROVINCES, formatPrice, isValidEmail, isValidPhone } from '@core/utils';
 import { IconComponent } from '@shared/components/icon/icon.component';
 
@@ -35,6 +36,8 @@ export class CheckoutComponent {
   readonly applied = signal<Discount | null>(null);
   readonly promoError = signal<string | null>(null);
   readonly promoBusy = signal(false);
+  /** Gender / category of the cart's products (from the promo check) so targeted codes re-check locally. */
+  private readonly productInfo = signal<Record<string, { gender?: string | null; category?: string | null }>>({});
   /** Fields the customer has left at least once — errors only show after that (or after submit). */
   readonly touched = signal<ReadonlySet<Field>>(new Set());
   readonly submitted = signal(false);
@@ -43,9 +46,22 @@ export class CheckoutComponent {
   readonly provinces = SA_PROVINCES;
 
   readonly threshold = computed(() => this.settings.settings().freeDeliveryThreshold ?? null);
-  readonly fee = computed(() => (this.method() === 'delivery' ? this.settings.deliveryFeeFor(this.cart.total()) : 0));
+  /** Delivery fee before any promo code. */
+  readonly baseFee = computed(() => (this.method() === 'delivery' ? this.settings.deliveryFeeFor(this.cart.total()) : 0));
+  /** A free-delivery code is applied and there is a fee for it to waive. */
+  readonly freeDelivery = computed(() => givesFreeDelivery(this.applied()) && this.method() === 'delivery' && this.baseFee() > 0);
+  readonly fee = computed(() => (this.freeDelivery() ? 0 : this.baseFee()));
   private lines(): DiscountLine[] {
-    return this.cart.items().map((i) => ({ unitPrice: i.price, qty: i.qty }));
+    const info = this.productInfo();
+    return this.cart.items().map((i) => ({
+      unitPrice: i.price,
+      qty: i.qty,
+      productId: i.productId,
+      sizeKey: i.sizeKey || null,
+      size: i.size || null,
+      gender: info[i.productId]?.gender ?? null,
+      category: info[i.productId]?.category ?? null,
+    }));
   }
   readonly discountAmount = computed(() => {
     const d = this.applied();
@@ -103,9 +119,12 @@ export class CheckoutComponent {
     this.promoBusy.set(true);
     try {
       // Validated on the server; codes are no longer readable from the browser.
+      // The ID token lets the server check once-per-customer / first-order codes.
+      const user = getAuthInstance().currentUser;
+      const token = user ? await user.getIdToken().catch(() => '') : '';
       const res = await fetch('/api/validate-promo', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
         body: JSON.stringify({
           code,
           items: this.cart.items().map((i) => ({ productId: i.productId, sizeKey: i.sizeKey || '', qty: i.qty })),
@@ -117,6 +136,7 @@ export class CheckoutComponent {
         this.promoError.set(data.error || 'Could not check that code.');
         return;
       }
+      this.productInfo.set(data.products && typeof data.products === 'object' ? data.products : {});
       const d: Discount = { ...(data.discount as Discount), code };
       const err = discountError(d, this.lines(), 'online');
       if (err) { this.applied.set(null); this.promoError.set(err); return; }
@@ -127,11 +147,11 @@ export class CheckoutComponent {
       this.promoBusy.set(false);
     }
   }
-  clearPromo(): void { this.applied.set(null); this.promo = ''; this.promoError.set(null); }
+  clearPromo(): void { this.applied.set(null); this.productInfo.set({}); this.promo = ''; this.promoError.set(null); }
 
   feeLabel(): string {
     const f = this.settings.deliveryFeeFor(this.cart.total());
-    return f === 0 ? 'Free' : formatPrice(f);
+    return f === 0 || givesFreeDelivery(this.applied()) ? 'Free' : formatPrice(f);
   }
 
   hasAccountAddresses(): boolean {

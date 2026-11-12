@@ -978,6 +978,7 @@ async function handleValidatePromo(request, env) {
   try {
     const fs = new Firestore(env);
     const lines = [];
+    const productInfo = {};
     for (const raw of rawItems) {
       const productId = String(raw.productId || "").trim();
       const qty = Math.floor(Number(raw.qty));
@@ -998,14 +999,40 @@ async function handleValidatePromo(request, env) {
         }
         unit = sizePrice(s);
       }
-      lines.push({ unitPrice: unit, qty: qty });
+      const sizeKey = opts ? (["size30", "size50", "size100"].indexOf(String(raw.sizeKey || "")) >= 0 ? String(raw.sizeKey) : "size30") : null;
+      lines.push({
+        unitPrice: unit, qty: qty, productId: productId, sizeKey: sizeKey,
+        size: sizeKey && opts[sizeKey] ? opts[sizeKey].size : (p.size || null),
+        gender: p.gender || null, category: p.category || null,
+      });
+      productInfo[productId] = { gender: p.gender || null, category: p.category || null };
     }
     const doc = await fs.get("discounts/" + code);
     if (!doc) return json({ error: "That code is not valid." }, 400);
     const discount = Object.assign({ code: code }, doc.data);
     const err = discountError(discount, lines, "online");
     if (err) return json({ error: err }, 400);
-    return json({ ok: true, discount: publicDiscount(discount), amount: computeDiscount(discount, lines) });
+    if (discount.oncePerCustomer === true || discount.firstOrderOnly === true) {
+      // Only the signed-in account is checked here (never an email typed into
+      // the request — that would let anyone probe someone else's order
+      // history). place-order re-checks with the uid AND the checkout email.
+      let uid = null;
+      let email = "";
+      const auth = request.headers.get("Authorization") || "";
+      if (auth.indexOf("Bearer ") === 0) {
+        const user = await verifyIdToken(env, auth.slice(7));
+        if (user) { uid = user.localId || null; email = String(user.email || ""); }
+      }
+      const custErr = await customerDiscountError(fs, discount, code, uid, email);
+      if (custErr) return json({ error: custErr }, 400);
+    }
+    return json({
+      ok: true,
+      discount: publicDiscount(discount),
+      amount: computeDiscount(discount, lines),
+      // Lets the checkout re-check targeted codes (gender / category) locally.
+      products: productInfo,
+    });
   } catch (e) {
     return json({ error: "Could not check that code. Please try again." }, 500);
   }
@@ -1410,7 +1437,7 @@ class Firestore {
   }
 
   /** Run a simple equality query and return { id, ...fields } documents. */
-  async query(collectionId, field, op, value, max = 200) {
+  async query(collectionId, field, op, value, max = 200, tx) {
     const body = {
       structuredQuery: {
         from: [{ collectionId: collectionId }],
@@ -1418,6 +1445,7 @@ class Firestore {
         limit: max,
       },
     };
+    if (tx) body.transaction = tx;
     const data = await this.call(":runQuery", { method: "POST", body: body });
     return (data || [])
       .filter(function (row) { return row && row.document; })
@@ -1572,22 +1600,42 @@ class Firestore {
     if (input.method === "delivery" && threshold != null && subtotal >= threshold) fee = 0;
     fee = round2(Math.max(0, fee));
 
-    const lines = rows.map(function (r) { return { unitPrice: r.unitPrice, qty: r.line.qty }; });
+    const lines = rows.map(function (r) {
+      return {
+        unitPrice: r.unitPrice,
+        qty: r.line.qty,
+        productId: r.line.productId,
+        sizeKey: r.sizeKey || null,
+        size: r.size ? r.size.size : (r.product.size || null),
+        gender: r.product.gender || null,
+        category: r.product.category || null,
+      };
+    });
     let discountDoc = null;
     let discount = null;
     let discountAmount = 0;
+    let deliveryWaived = 0;
     if (input.code) {
       discountDoc = await this.get("discounts/" + input.code, tx);
       if (!discountDoc) throw httpError(400, "That promo code is not valid.");
       discount = Object.assign({ code: input.code }, discountDoc.data);
       const err = discountError(discount, lines, "online");
       if (err) throw httpError(400, err);
+      // Once-per-customer / first-order-only: read the buyer's past orders
+      // inside this transaction, before anything is committed.
+      const custErr = await customerDiscountError(this, discount, input.code, input.uid, input.email, tx);
+      if (custErr) throw httpError(400, custErr);
       discountAmount = computeDiscount(discount, lines);
+      if (discount.freeDelivery === true && input.method === "delivery" && fee > 0) {
+        deliveryWaived = fee;
+        fee = 0;
+      }
     }
+    const discountUsed = discountAmount > 0 || deliveryWaived > 0;
     // Count the promo use now (in this transaction) rather than on payment, so a
     // single-use code can't be spent on several checkouts opened at once.
     // It is handed back if the checkout expires or Yoco can't be reached.
-    const discountWrite = discountAmount > 0 && discountDoc ? {
+    const discountWrite = discountUsed && discountDoc ? {
       update: { name: discountDoc.name, fields: { usedCount: toFs(Number(discountDoc.data.usedCount || 0) + 1) } },
       updateMask: { fieldPaths: ["usedCount"] },
       currentDocument: { updateTime: discountDoc.updateTime },
@@ -1620,8 +1668,10 @@ class Firestore {
       deliveryFee: fee,
       paymentMethod: "yoco",
       subtotal: subtotal,
-      discountCode: discountAmount > 0 ? input.code : undefined,
+      discountCode: discountUsed ? input.code : undefined,
       discountAmount: discountAmount > 0 ? discountAmount : undefined,
+      // Delivery fee the code waived (free-delivery codes).
+      deliveryDiscount: deliveryWaived > 0 ? deliveryWaived : undefined,
       items: rows.map(function (r) {
         return {
           productId: r.line.productId,
@@ -1799,6 +1849,20 @@ function effectivePrice(p) {
   return sale != null && Number(sale) > 0 && Number(sale) < Number(p.price) ? Number(sale) : Number(p.price) || 0;
 }
 
+// ---------- Discount engine ----------
+// Mirrors src/app/core/utils/discount.ts (storefront) and the admin app's
+// src/app/discount-util.ts (POS). Keep all three in exact agreement.
+// Lines: { unitPrice, qty, productId?, sizeKey?, size?, gender?, category? }.
+const DISCOUNT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "5 Dec 2026" in South African time. */
+function fmtDay(ms) {
+  const d = new Date(Number(ms) + 2 * 3600 * 1000);
+  return d.getUTCDate() + " " + DISCOUNT_MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear();
+}
+
+function normText(s) { return String(s == null ? "" : s).trim().toLowerCase(); }
+
 function expandLines(lines) {
   const units = [];
   for (const line of lines) for (let i = 0; i < line.qty; i++) units.push(line.unitPrice);
@@ -1813,20 +1877,50 @@ function linesSubtotal(lines) {
   return lines.reduce(function (s, line) { return s + line.unitPrice * line.qty; }, 0);
 }
 
+function lineSizeKey(l) {
+  if (l.sizeKey) return String(l.sizeKey);
+  const m = /(\d+)\s*ml/i.exec(String(l.size || ""));
+  return m && ["30", "50", "100"].indexOf(m[1]) >= 0 ? "size" + m[1] : "";
+}
+
+function hasTargeting(d) {
+  return !!((Array.isArray(d.productIds) && d.productIds.length) || normText(d.gender) || normText(d.category) ||
+    (Array.isArray(d.sizeKeys) && d.sizeKeys.length));
+}
+
+function lineMatches(d, l) {
+  if (Array.isArray(d.productIds) && d.productIds.length && d.productIds.indexOf(String(l.productId || "")) < 0) return false;
+  if (normText(d.gender) && normText(l.gender) !== normText(d.gender)) return false;
+  if (normText(d.category) && normText(l.category) !== normText(d.category)) return false;
+  if (Array.isArray(d.sizeKeys) && d.sizeKeys.length && d.sizeKeys.indexOf(lineSizeKey(l)) < 0) return false;
+  return true;
+}
+
+function matchingLines(d, lines) {
+  return hasTargeting(d) ? lines.filter(function (l) { return lineMatches(d, l); }) : lines;
+}
+
+function freePercent(d) {
+  const p = Number(d.bundleFreePercent);
+  return p > 0 && p < 100 ? p : 100;
+}
+
 function computeDiscount(d, lines) {
-  const subtotal = linesSubtotal(lines);
+  const matching = matchingLines(d, lines);
+  const base = linesSubtotal(matching);
   const mech = d.mechanic || "order";
+  const value = Number(d.value || 0);
   let amt = 0;
 
   if (mech === "order") {
-    amt = d.type === "percent" ? (subtotal * Number(d.value || 0)) / 100 : Number(d.value || 0);
+    amt = d.type === "percent" ? (base * value) / 100 : value;
   } else if (mech === "item") {
-    for (const price of expandLines(lines)) {
-      amt += d.type === "percent" ? (price * Number(d.value || 0)) / 100 : Math.min(Number(d.value || 0), price);
+    for (const price of expandLines(matching)) {
+      amt += d.type === "percent" ? (price * value) / 100 : Math.min(value, price);
     }
   } else if (mech === "bundle") {
     const n = Math.max(1, Number(d.bundleQty) || 1);
-    const units = expandLines(lines).sort(function (a, b) { return b - a; });
+    const units = expandLines(matching).sort(function (a, b) { return b - a; });
     const groups = Math.floor(units.length / n);
     if (groups > 0) {
       const participating = units.slice(0, groups * n);
@@ -1837,14 +1931,17 @@ function computeDiscount(d, lines) {
       else if (reward === "price") amt = Math.max(0, partSum - groups * Number(d.bundleValue || 0));
       else if (reward === "free") {
         const k = Math.max(1, Number(d.bundleFree) || 1);
+        const pct = freePercent(d);
         for (let g = 0; g < groups; g++) {
           const group = participating.slice(g * n, g * n + n);
-          for (let i = 0; i < k && i < group.length; i++) amt += group[group.length - 1 - i];
+          for (let i = 0; i < k && i < group.length; i++) amt += (group[group.length - 1 - i] * pct) / 100;
         }
       }
     }
   }
-  return Math.min(round2(amt), subtotal);
+  amt = round2(amt);
+  if (d.maxDiscount != null && Number(d.maxDiscount) > 0) amt = Math.min(amt, Number(d.maxDiscount));
+  return Math.min(round2(amt), base);
 }
 
 function discountError(d, lines, channel, now) {
@@ -1855,14 +1952,52 @@ function discountError(d, lines, channel, now) {
   if (scope !== "both" && scope !== channel) {
     return channel === "pos" ? "This code can't be used at the till." : "This code isn't valid online.";
   }
+  if (d.startsAt && now < Number(d.startsAt)) return "This code is only valid from " + fmtDay(d.startsAt) + ".";
   if (d.expiresAt && now > Number(d.expiresAt)) return "This code has expired.";
   if (d.maxUses != null && (Number(d.usedCount) || 0) >= Number(d.maxUses)) return "This code has reached its usage limit.";
   if (d.minSpend && subtotal < Number(d.minSpend)) return "Spend at least R" + d.minSpend + " to use this code.";
+  const targeted = hasTargeting(d);
+  const units = totalUnits(matchingLines(d, lines));
+  if (targeted && units === 0) return "This code isn't valid for the items in your cart.";
+  const what = targeted ? "qualifying items" : "items";
+  if (d.minQty && units < Number(d.minQty)) return "Add at least " + d.minQty + " " + what + " to use this code.";
   if ((d.mechanic || "order") === "bundle") {
     const n = Math.max(1, Number(d.bundleQty) || 1);
-    if (totalUnits(lines) < n) return "Add at least " + n + " items to use this code.";
+    if (units < n) return "Add at least " + n + " " + what + " to use this code.";
   } else if (computeDiscount(d, lines) <= 0) {
-    return "This code gives no discount on your cart.";
+    if (d.freeDelivery !== true) return "This code gives no discount on your cart.";
+    if (channel === "pos") return "This code only gives free delivery on online orders.";
+  }
+  return null;
+}
+
+/**
+ * Per-customer rules (online only): oncePerCustomer and firstOrderOnly.
+ * The customer is the signed-in uid and/or the checkout email. Pass `tx` to
+ * read the order history inside the placement transaction.
+ */
+async function customerDiscountError(fs, d, code, uid, email, tx) {
+  if (d.oncePerCustomer !== true && d.firstOrderOnly !== true) return null;
+  const mail = String(email || "").trim();
+  if (!uid && !mail) {
+    return d.oncePerCustomer === true
+      ? "Please sign in to use this code — it's limited to one use per customer."
+      : "Please sign in to use this code — it's for first orders only.";
+  }
+  const seen = new Map();
+  const add = function (rows) { for (const r of rows || []) seen.set(r.id, r); };
+  if (uid) add(await fs.query("orders", "uid", "EQUAL", uid, 300, tx));
+  if (mail) {
+    add(await fs.query("orders", "customer.email", "EQUAL", mail, 300, tx));
+    if (mail.toLowerCase() !== mail) add(await fs.query("orders", "customer.email", "EQUAL", mail.toLowerCase(), 300, tx));
+  }
+  const orders = Array.from(seen.values());
+  const upper = String(code || "").toUpperCase();
+  if (d.oncePerCustomer === true && orders.some(function (o) {
+    return String(o.discountCode || "").toUpperCase() === upper && o.status !== "cancelled";
+  })) return "You've already used this code.";
+  if (d.firstOrderOnly === true && orders.some(function (o) { return isPaidLike(o.status); })) {
+    return "This code is only for your first order.";
   }
   return null;
 }
@@ -2069,7 +2204,9 @@ function adminOrderHtml(order, headline) {
 function publicDiscount(d) {
   const out = {};
   for (const k of ['code', 'active', 'type', 'value', 'mechanic', 'scope', 'minSpend', 'expiresAt',
-    'bundleQty', 'bundleReward', 'bundleValue', 'bundleFree']) {
+    'bundleQty', 'bundleReward', 'bundleValue', 'bundleFree', 'bundleFreePercent',
+    'startsAt', 'freeDelivery', 'productIds', 'gender', 'category', 'sizeKeys', 'minQty', 'maxDiscount',
+    'oncePerCustomer', 'firstOrderOnly']) {
     if (d[k] !== undefined) out[k] = d[k];
   }
   return out;
