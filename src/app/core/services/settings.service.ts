@@ -1,8 +1,7 @@
-import { Injectable, computed, signal } from '@angular/core';
+import { Injectable, signal } from '@angular/core';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { getDb } from '@core/firebase/firebase';
 import { StoreSettings } from '@core/models';
-import { banking } from '@core/config/banking.config';
 import { setPlaceholderOverrides } from '@core/utils';
 
 const DEFAULTS: StoreSettings = {
@@ -17,20 +16,6 @@ const DEFAULTS: StoreSettings = {
 @Injectable({ providedIn: 'root' })
 export class SettingsService {
   readonly settings = signal<StoreSettings>(DEFAULTS);
-
-  /** Banking details for the confirmation page — admin settings win, else banking.config. */
-  readonly bankingDetails = computed(() => {
-    const s = this.settings();
-    return {
-      accountName: s.bankAccountName || banking.accountName,
-      bank: s.bankName || banking.bank,
-      accountNumber: s.bankAccountNumber || banking.accountNumber,
-      branchCode: s.bankBranchCode || banking.branchCode,
-      accountType: s.bankAccountType || banking.accountType,
-      contactEmail: s.contactEmail || banking.contactEmail,
-      contactPhone: s.contactPhone || banking.contactPhone,
-    };
-  });
 
   constructor() {
     try {

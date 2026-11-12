@@ -25,7 +25,6 @@ export class OrdersService {
     _deliveryFee: number,
     discountCode?: string,
     _discountAmount = 0,
-    paymentMethod: 'eft' | 'yoco' = 'yoco',
     referralCode = '',
   ): Promise<Order | null> {
     if (!items.length) return null;
@@ -48,18 +47,25 @@ export class OrdersService {
           items: items.map((i) => ({ productId: i.productId, sizeKey: i.sizeKey || '', qty: i.qty })),
           discountCode: discountCode || '',
           referralCode: referralCode || '',
-          paymentMethod,
+          // Card via Yoco is the only way to pay online.
+          paymentMethod: 'yoco',
         }),
       });
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.order) {
-        this.error.set(data.error || 'Sorry, we could not place your order. Please try again.');
+        this.error.set(
+          (typeof data.error === 'string' && data.error) || 'Sorry, we could not place your order. Please try again.',
+        );
+        return null;
+      }
+      if (!data.redirectUrl) {
+        this.error.set('We could not start the secure card payment. Please try again in a moment.');
         return null;
       }
 
       const order = data.order as Order;
-      this.redirectUrl.set(data.redirectUrl || null);
+      this.redirectUrl.set(data.redirectUrl);
       this.lastOrder.set(order);
       this.writeLast(order);
       return order;

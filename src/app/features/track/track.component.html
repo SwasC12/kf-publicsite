@@ -1,45 +1,60 @@
 
     <div class="track reveal">
       <h1 class="page-title">Track your order</h1>
-      <p class="auth-sub">Enter your order reference and the email address used on the order.</p>
+      <p class="lede">Enter your order reference and the email address used on the order.</p>
       <form class="track-form" (ngSubmit)="lookup()">
-        <input type="text" [(ngModel)]="ref" name="ref" placeholder="KF-XXXXX" autocomplete="off" autocapitalize="characters" />
-        <input type="email" [(ngModel)]="email" name="email" placeholder="you@email.com" autocomplete="email" />
-        <button type="submit" class="btn primary" [disabled]="busy() || !ref.trim() || !email.trim()">{{ busy() ? 'Checking…' : 'Track' }}</button>
+        <label class="field"><span class="label-text">Order reference</span>
+          <input type="text" class="upper" [(ngModel)]="ref" name="ref" placeholder="KF-XXXXX" autocomplete="off"
+                 autocapitalize="characters" spellcheck="false" required />
+        </label>
+        <label class="field"><span class="label-text">Email</span>
+          <input type="email" [(ngModel)]="email" name="email" placeholder="you@email.com" autocomplete="email"
+                 inputmode="email" autocapitalize="off" spellcheck="false" required />
+        </label>
+        <button type="submit" class="btn primary" [disabled]="busy() || !ref.trim() || !email.trim()" [attr.aria-busy]="busy()">
+          @if (busy()) { <span class="spinner" aria-hidden="true"></span> Checking… } @else { Track order }
+        </button>
       </form>
 
-      @if (notFound()) { <div class="notice error">No order found with that reference. Check the code and try again.</div> }
-
-      @if (result(); as r) {
-        <div class="track-result">
-          <div class="track-head">
-            <span class="hist-ref">{{ r.reference }}</span>
-            <span class="status-pill" [attr.data-status]="r.status">{{ r.status === 'fulfilled' || r.status === 'shipped' ? 'on its way' : r.status }}</span>
+      <div aria-live="polite">
+        @if (notFound()) {
+          <div class="alert error" role="alert">
+            <strong>No order found.</strong>
+            <span>Check the reference and email match your confirmation email, then try again.</span>
           </div>
-          @if (r.status === 'cancelled') {
-            <p>This order was cancelled. If that's unexpected, please <a routerLink="/contact">contact us</a>.</p>
-          } @else {
-            <ol class="track-steps">
-              @for (s of steps; track s; let i = $index) {
-                <li [class.done]="stepIndex(r.status) >= i" [class.current]="stepIndex(r.status) === i">
-                  <span class="tick">@if (stepIndex(r.status) >= i) { <app-icon name="check" [size]="14" /> }</span>
-                  {{ label(s) }}
-                </li>
-              }
-            </ol>
-          }
-          <p class="track-total">Order total: <strong>{{ price(r.total) }}</strong></p>
-          @if (r.courier || r.trackingNumber) {
-            <div class="track-courier">
-              <span class="track-courier-label">Courier</span>
-              <strong>{{ r.courier || 'Courier' }}</strong>
-              @if (r.trackingNumber) { <span class="track-courier-no">{{ r.trackingNumber }}</span> }
-              @if (r.trackingUrl) {
-                <a class="track-courier-link" [href]="r.trackingUrl" target="_blank" rel="noopener noreferrer">Track parcel →</a>
-              }
+        }
+
+        @if (result(); as r) {
+          <div class="track-result">
+            <div class="track-head">
+              <span class="hist-ref">{{ r.reference }}</span>
+              <span class="status-pill" [attr.data-status]="r.status">{{ r.status === 'fulfilled' || r.status === 'shipped' ? 'on its way' : r.status }}</span>
             </div>
-          }
-        </div>
-      }
+            @if (r.status === 'cancelled') {
+              <p>This order was cancelled. If that's unexpected, please <a routerLink="/contact">contact us</a>.</p>
+            } @else {
+              <ol class="track-steps">
+                @for (s of steps; track s; let i = $index) {
+                  <li [class.done]="stepIndex(r.status) >= i" [class.current]="stepIndex(r.status) === i"
+                      [attr.aria-current]="stepIndex(r.status) === i ? 'step' : null">
+                    <span class="tick" aria-hidden="true">@if (stepIndex(r.status) >= i) { <app-icon name="check" [size]="14" /> }</span>
+                    <span>{{ label(s) }}</span>
+                  </li>
+                }
+              </ol>
+            }
+            <p class="track-total">Order total: <strong>{{ price(r.total) }}</strong></p>
+            @if (r.courier || r.trackingNumber) {
+              <div class="track-courier">
+                <span class="track-courier-label">Courier</span>
+                <strong>{{ r.courier || 'Courier' }}</strong>
+                @if (r.trackingNumber) { <span class="mono">{{ r.trackingNumber }}</span> }
+                @if (r.trackingUrl) {
+                  <a class="text-link" [href]="r.trackingUrl" target="_blank" rel="noopener noreferrer">Track parcel →</a>
+                }
+              </div>
+            }
+          </div>
+        }
+      </div>
     </div>
-  

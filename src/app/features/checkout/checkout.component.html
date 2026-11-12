@@ -1,126 +1,233 @@
 
     @if (cart.items().length === 0) {
-      <div class="notice"><p>Your cart is empty.</p><a class="btn primary" routerLink="/">Browse fragrances</a></div>
+      <div class="empty-state">
+        <app-icon name="bag" [size]="36" />
+        <h1 class="empty-title">Your cart is empty</h1>
+        <p>Add a fragrance or two, then come back to check out.</p>
+        <a class="btn primary" routerLink="/">Browse fragrances</a>
+      </div>
     } @else if (settings.settings().storeOpen === false) {
-      <div class="notice"><h2 class="section-title">We're currently closed</h2><p>{{ settings.settings().storeClosedMessage || 'The shop is temporarily not taking orders. Please check back soon.' }}</p><a class="btn" routerLink="/">Back to shop</a></div>
+      <div class="empty-state">
+        <h1 class="empty-title">We're currently closed</h1>
+        <p>{{ settings.settings().storeClosedMessage || 'The shop is temporarily not taking orders. Please check back soon.' }}</p>
+        <a class="btn" routerLink="/">Back to shop</a>
+      </div>
     } @else if (!auth.isLoggedIn()) {
-      <div class="notice">
-        <app-icon name="user" [size]="40" />
-        <h2 class="section-title">Sign in to checkout</h2>
+      <div class="empty-state">
+        <app-icon name="user" [size]="36" />
+        <h1 class="empty-title">Sign in to check out</h1>
         <p>Create an account or sign in so we can save your details and order history.</p>
-        <a class="btn primary" routerLink="/account" [queryParams]="{ return: '/checkout' }">Sign in / create account</a>
+        <a class="btn primary" routerLink="/account" [queryParams]="{ return: '/checkout' }">Sign in or create account</a>
       </div>
     } @else if (!cust.profile()) {
-      <div class="notice"><p>Loading your account…</p></div>
+      <div class="empty-state" aria-busy="true">
+        <span class="spinner" aria-hidden="true"></span>
+        <p>Loading your account…</p>
+      </div>
     } @else if (!hasAccountAddresses()) {
-      <div class="notice">
-        <app-icon name="user" [size]="40" />
-        <h2 class="section-title">Add your addresses</h2>
-        <p>Please add both a billing and delivery address to your account before checking out.</p>
+      <div class="empty-state">
+        <app-icon name="user" [size]="36" />
+        <h1 class="empty-title">Add your addresses</h1>
+        <p>Please add both a billing and a delivery address to your account before checking out.</p>
         <a class="btn primary" routerLink="/account" [queryParams]="{ return: '/checkout' }">Complete my profile</a>
       </div>
     } @else {
-      <h1 class="page-title">Checkout</h1>
-      @if (!auth.isLoggedIn()) {
-        <p class="checkout-signin">Have an account? <a routerLink="/account">Sign in</a> to use your saved details — or check out as a guest below.</p>
-      }
+      <header class="page-head">
+        <a class="back-link" routerLink="/cart"><app-icon name="arrow-left" [size]="16" /> Back to cart</a>
+        <h1 class="page-title">Checkout</h1>
+      </header>
+
       <div class="checkout-grid">
-        <form class="checkout-form" (ngSubmit)="place()">
-          <h2 class="block-title">Contact</h2>
-          <label>Full name*<input type="text" name="name" [(ngModel)]="name" required autocomplete="name" /></label>
-          <label>Email*<input type="email" name="email" [(ngModel)]="email" required autocomplete="email" (blur)="emailTouched.set(true)" /></label>
-          @if (emailError()) { <p class="form-error">{{ emailError() }}</p> }
-          <label>Phone / WhatsApp*<input type="tel" name="phone" [(ngModel)]="phone" required autocomplete="tel" (blur)="phoneTouched.set(true)" /></label>
-          @if (phoneError()) { <p class="form-error">{{ phoneError() }}</p> }
+        <form class="checkout-form" (ngSubmit)="place()" novalidate>
+          <fieldset class="form-section">
+            <legend class="form-legend"><span class="step-no">1</span> Contact</legend>
+            <div class="field">
+              <label for="co-name">Full name</label>
+              <input id="co-name" type="text" name="name" [(ngModel)]="name" required autocomplete="name"
+                     (blur)="touch('name')" [attr.aria-invalid]="!!error('name')" aria-describedby="co-name-err" />
+              @if (error('name'); as e) { <p class="field-error" id="co-name-err">{{ e }}</p> }
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="co-email">Email</label>
+                <input id="co-email" type="email" name="email" [(ngModel)]="email" required autocomplete="email"
+                       inputmode="email" autocapitalize="off" spellcheck="false"
+                       (blur)="touch('email')" [attr.aria-invalid]="!!error('email')" aria-describedby="co-email-err" />
+                @if (error('email'); as e) { <p class="field-error" id="co-email-err">{{ e }}</p> }
+              </div>
+              <div class="field">
+                <label for="co-phone">Phone / WhatsApp</label>
+                <input id="co-phone" type="tel" name="phone" [(ngModel)]="phone" required autocomplete="tel" inputmode="tel"
+                       placeholder="082 123 4567"
+                       (blur)="touch('phone')" [attr.aria-invalid]="!!error('phone')" aria-describedby="co-phone-err" />
+                @if (error('phone'); as e) { <p class="field-error" id="co-phone-err">{{ e }}</p> }
+              </div>
+            </div>
+          </fieldset>
 
-          <h2 class="block-title">Delivery</h2>
-          <div class="method-toggle">
-            @if (settings.settings().deliveryEnabled !== false) {
-              <label class="method" [class.on]="method() === 'delivery'">
-                <input type="radio" name="method" value="delivery" [ngModel]="method()" (ngModelChange)="method.set('delivery')" />
-                <span>Deliver to me <em>{{ feeLabel() }}</em></span>
-              </label>
-            }
-            @if (settings.settings().collectionEnabled !== false) {
-              <label class="method" [class.on]="method() === 'collection'">
-                <input type="radio" name="method" value="collection" [ngModel]="method()" (ngModelChange)="method.set('collection')" />
-                <span>Pick up <em>Free</em></span>
-              </label>
-            }
-          </div>
+          <fieldset class="form-section">
+            <legend class="form-legend"><span class="step-no">2</span> Delivery</legend>
+            <div class="option-group" role="radiogroup" aria-label="Delivery method">
+              @if (settings.settings().deliveryEnabled !== false) {
+                <label class="option" [class.on]="method() === 'delivery'">
+                  <input type="radio" name="method" value="delivery" [checked]="method() === 'delivery'" (change)="method.set('delivery')" />
+                  <span class="option-text"><strong>Deliver to me</strong><small>Nationwide courier</small></span>
+                  <span class="option-price">{{ feeLabel() }}</span>
+                </label>
+              }
+              @if (settings.settings().collectionEnabled !== false) {
+                <label class="option" [class.on]="method() === 'collection'">
+                  <input type="radio" name="method" value="collection" [checked]="method() === 'collection'" (change)="method.set('collection')" />
+                  <span class="option-text"><strong>Collect</strong><small>We'll arrange a time</small></span>
+                  <span class="option-price">Free</span>
+                </label>
+              }
+            </div>
 
-          @if (method() === 'delivery') {
-            <ng-container *ngTemplateOutlet="addr; context: { $implicit: delivery }" />
-          } @else {
-            <p class="pay-info">{{ settings.settings().collectionNote || "We'll arrange collection details with you after your order." }}</p>
+            @if (method() === 'delivery') {
+              <div class="field">
+                <label for="co-l1">Street address</label>
+                <input id="co-l1" type="text" name="l1" [(ngModel)]="delivery.line1" required autocomplete="address-line1"
+                       (blur)="touch('line1')" [attr.aria-invalid]="!!error('line1')" aria-describedby="co-l1-err" />
+                @if (error('line1'); as e) { <p class="field-error" id="co-l1-err">{{ e }}</p> }
+              </div>
+              <div class="field">
+                <label for="co-l2">Apartment, complex, suburb <span class="opt">(optional)</span></label>
+                <input id="co-l2" type="text" name="l2" [(ngModel)]="delivery.line2" autocomplete="address-line2" />
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="co-city">City / town</label>
+                  <input id="co-city" type="text" name="city" [(ngModel)]="delivery.city" required autocomplete="address-level2"
+                         (blur)="touch('city')" [attr.aria-invalid]="!!error('city')" aria-describedby="co-city-err" />
+                  @if (error('city'); as e) { <p class="field-error" id="co-city-err">{{ e }}</p> }
+                </div>
+                <div class="field">
+                  <label for="co-prov">Province</label>
+                  <select id="co-prov" name="prov" [(ngModel)]="delivery.province" autocomplete="address-level1">
+                    <option value="">Select province…</option>
+                    @for (p of provinces; track p) { <option [value]="p">{{ p }}</option> }
+                  </select>
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="co-pc">Postal code</label>
+                  <input id="co-pc" type="text" name="pc" [(ngModel)]="delivery.postalCode" autocomplete="postal-code"
+                         inputmode="numeric" maxlength="6" />
+                </div>
+                <div class="field">
+                  <label for="co-country">Country</label>
+                  <input id="co-country" type="text" name="co" [(ngModel)]="delivery.country" autocomplete="country-name" />
+                </div>
+              </div>
+            } @else {
+              <p class="info-note">{{ settings.settings().collectionNote || "We'll arrange collection details with you after your order." }}</p>
+            }
+
+            <div class="field">
+              <label for="co-note">Order note <span class="opt">(optional)</span></label>
+              <textarea id="co-note" name="note" rows="2" [(ngModel)]="note" placeholder="Delivery instructions, gate code, preferences…"></textarea>
+            </div>
+          </fieldset>
+
+          <fieldset class="form-section">
+            <legend class="form-legend"><span class="step-no">3</span> Codes <span class="opt">(optional)</span></legend>
+            <div class="field">
+              <label for="co-promo">Promo code</label>
+              <div class="inline-field">
+                <input id="co-promo" type="text" name="promo" [(ngModel)]="promo" class="upper" autocomplete="off"
+                       autocapitalize="characters" spellcheck="false" [readonly]="!!applied()"
+                       (keydown.enter)="$event.preventDefault(); applyPromo()" aria-describedby="co-promo-msg" />
+                @if (applied()) {
+                  <button type="button" class="btn" (click)="clearPromo()">Remove</button>
+                } @else {
+                  <button type="button" class="btn" (click)="applyPromo()" [disabled]="!promo.trim() || promoBusy()">
+                    {{ promoBusy() ? 'Checking…' : 'Apply' }}
+                  </button>
+                }
+              </div>
+              <div id="co-promo-msg" aria-live="polite">
+                @if (applied()) { <p class="field-ok"><app-icon name="check" [size]="14" /> {{ applied()!.code }} applied{{ discountAmount() > 0 ? ' — you save ' + price(discountAmount()) : '' }}</p> }
+                @if (promoError()) { <p class="field-error">{{ promoError() }}</p> }
+              </div>
+            </div>
+            <div class="field">
+              <label for="co-ref">Friend's referral code</label>
+              <input id="co-ref" type="text" name="referral" [(ngModel)]="referral" placeholder="KFXXXXXX" class="upper"
+                     autocomplete="off" autocapitalize="characters" spellcheck="false" />
+            </div>
+          </fieldset>
+
+          <fieldset class="form-section">
+            <legend class="form-legend"><span class="step-no">4</span> Payment</legend>
+            <div class="pay-method">
+              <app-icon name="check-circle" [size]="20" />
+              <div>
+                <strong>Card payment, secured by Yoco</strong>
+                <p>You'll be taken to Yoco's secure page to pay. Your card details never touch our site.</p>
+              </div>
+            </div>
+            <label class="check-row" [class.invalid]="!!error('terms')">
+              <input type="checkbox" [(ngModel)]="termsAccepted" name="terms" (change)="touch('terms')"
+                     [attr.aria-invalid]="!!error('terms')" aria-describedby="co-terms-err" />
+              <span>I agree to the <a routerLink="/terms" target="_blank">Terms of Sale</a> and
+                <a routerLink="/privacy" target="_blank">Privacy Policy</a>.</span>
+            </label>
+            @if (error('terms'); as e) { <p class="field-error" id="co-terms-err">{{ e }}</p> }
+          </fieldset>
+
+          @if (orders.error()) {
+            <div class="alert error" id="checkout-error" role="alert">
+              <strong>We couldn't start your payment.</strong>
+              <span>{{ orders.error() }}</span>
+            </div>
           }
 
-          <label>Order note (optional)<textarea name="note" rows="2" [(ngModel)]="note" placeholder="Delivery instructions, preferences…"></textarea></label>
-
-          <h2 class="block-title">Referral code <span class="dim">(optional)</span></h2>
-          <label>Friend's code<input type="text" name="referral" [(ngModel)]="referral" placeholder="KFXXXXXX" autocapitalize="characters" /></label>
-
-          <h2 class="block-title">Promo code</h2>
-          <div class="promo-row">
-            <input type="text" name="promo" [(ngModel)]="promo" placeholder="Enter code" style="text-transform:uppercase" />
-            @if (applied()) {
-              <button type="button" class="btn" (click)="clearPromo()">Remove</button>
-            } @else {
-              <button type="button" class="btn" (click)="applyPromo()" [disabled]="!promo.trim()">Apply</button>
-            }
+          <div class="pay-bar">
+            <button type="submit" class="btn primary big pay-btn" [disabled]="orders.placing() || redirecting()"
+                    [attr.aria-busy]="orders.placing() || redirecting()">
+              @if (orders.placing() || redirecting()) {
+                <span class="spinner" aria-hidden="true"></span>
+                {{ redirecting() ? 'Opening secure payment…' : 'Starting secure payment…' }}
+              } @else {
+                Pay {{ price(grandTotal()) }} securely
+              }
+            </button>
+            <p class="pay-fine">Orders are dispatched once your payment is confirmed.</p>
           </div>
-          @if (applied()) { <p class="promo-ok">Code {{ applied()!.code }} applied — {{ discountAmount() > 0 ? '−' + price(discountAmount()) : 'no discount' }}</p> }
-          @if (promoError()) { <p class="form-error">{{ promoError() }}</p> }
-
-          <div class="pay-info"><strong>Secure card payment</strong><br />You'll be redirected to <strong>Yoco</strong> to pay securely. Your card details never touch our site.</div>
-          <label class="chk terms">
-            <input type="checkbox" [(ngModel)]="termsAccepted" name="terms" />
-            <span>I agree to the <a routerLink="/terms" target="_blank">Terms of Sale</a> and
-              <a routerLink="/privacy" target="_blank">Privacy Policy</a>.</span>
-          </label>
-          @if (termsError()) { <p class="form-error">Please accept the terms to place your order.</p> }
-          @if (orders.error()) { <div class="notice error">{{ orders.error() }}</div> }
-          <button type="submit" class="btn primary big" [disabled]="!valid() || orders.placing()">
-            {{ orders.placing() ? 'Starting secure payment…' : 'Pay securely' }}
-          </button>
         </form>
 
-        <aside class="order-summary">
-          <h2 class="block-title">Order summary</h2>
-          @for (i of cart.items(); track i.productId) {
-            <div class="sum-row"><span>{{ i.qty }} × {{ i.name }}@if (i.size) { <span class="dim"> ({{ i.size }})</span> }</span><span>{{ price(i.price * i.qty) }}</span></div>
-          }
-          <div class="sum-row"><span>Subtotal</span><span>{{ price(cart.total()) }}</span></div>
-          <div class="sum-row"><span>{{ method() === 'collection' ? 'Collection' : 'Delivery' }}</span><span>{{ fee() === 0 ? 'Free' : price(fee()) }}</span></div>
-          @if (discountAmount() > 0) { <div class="sum-row"><span>Discount ({{ applied()!.code }})</span><span>−{{ price(discountAmount()) }}</span></div> }
-          <div class="sum-total"><span>Total</span><strong>{{ price(grandTotal()) }}</strong></div>
+        <aside class="order-summary" aria-labelledby="summary-title">
+          <h2 class="summary-title" id="summary-title">Order summary
+            <span class="summary-count">{{ cart.count() }} {{ cart.count() === 1 ? 'item' : 'items' }}</span>
+          </h2>
+          <ul class="summary-items">
+            @for (i of cart.items(); track i.productId + '|' + (i.sizeKey || '')) {
+              <li class="summary-item">
+                <span class="summary-thumb">
+                  @if (i.imageUrl) { <img [src]="i.imageUrl" alt="" loading="lazy" /> }
+                  <span class="summary-qty" aria-hidden="true">{{ i.qty }}</span>
+                </span>
+                <span class="summary-name">{{ i.name }}@if (i.size) { <small>{{ i.size }}</small> }<span class="sr-only">, quantity {{ i.qty }}</span></span>
+                <span class="summary-amt">{{ price(i.price * i.qty) }}</span>
+              </li>
+            }
+          </ul>
+          <dl class="totals">
+            <div><dt>Subtotal</dt><dd>{{ price(cart.total()) }}</dd></div>
+            <div><dt>{{ method() === 'collection' ? 'Collection' : 'Delivery' }}</dt><dd>{{ fee() === 0 ? 'Free' : price(fee()) }}</dd></div>
+            @if (discountAmount() > 0) { <div class="saving"><dt>Discount ({{ applied()!.code }})</dt><dd>−{{ price(discountAmount()) }}</dd></div> }
+            <div class="grand"><dt>Total</dt><dd>{{ price(grandTotal()) }}</dd></div>
+          </dl>
           @if (method() === 'delivery' && fee() > 0 && threshold()) {
             <p class="ship-hint">Spend {{ price(threshold()! - cart.total()) }} more for free delivery.</p>
           }
-          <div class="trust-row">
-            <span>Secure checkout</span>
-            <span>Nationwide delivery</span>
-            <span>7-day returns</span>
-          </div>
+          <ul class="trust-row">
+            <li>Secure card checkout</li>
+            <li>Nationwide delivery</li>
+            <li>Hand-checked orders</li>
+          </ul>
         </aside>
       </div>
     }
-
-    <ng-template #addr let-a>
-      <label>Address line 1*<input type="text" [ngModel]="a.line1" (ngModelChange)="a.line1=$event" name="l1" required /></label>
-      <label>Address line 2<input type="text" [ngModel]="a.line2" (ngModelChange)="a.line2=$event" name="l2" /></label>
-      <div class="row">
-        <label>City*<input type="text" [ngModel]="a.city" (ngModelChange)="a.city=$event" name="city" required /></label>
-        <label>Province
-          <select [ngModel]="a.province" (ngModelChange)="a.province=$event" name="prov">
-            <option value="">Select province…</option>
-            @for (p of provinces; track p) { <option [value]="p">{{ p }}</option> }
-          </select>
-        </label>
-      </div>
-      <div class="row">
-        <label>Postal code<input type="text" [ngModel]="a.postalCode" (ngModelChange)="a.postalCode=$event" name="pc" /></label>
-        <label>Country<input type="text" [ngModel]="a.country" (ngModelChange)="a.country=$event" name="co" /></label>
-      </div>
-    </ng-template>
-  

@@ -1,4 +1,4 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, DestroyRef, ElementRef, computed, effect, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink, ActivatedRoute } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
@@ -72,9 +72,34 @@ export class ProductComponent {
         this.seo.product(p);
         this.reviewsSvc.watch(p.id);
         const opts = sizeOptions(p);
-        if (!opts.some((o) => o.key === this.selectedSizeKey())) this.selectedSizeKey.set(opts[0]?.key);
+        if (!opts.some((o) => o.key === this.selectedSizeKey())) {
+          // Start on the first size that can actually be bought.
+          this.selectedSizeKey.set((opts.find((o) => sizeAvailable(o.size)) ?? opts[0])?.key);
+        }
       }
     });
+
+    // Mobile sticky "Add to cart" bar: show it while the main buy row is off screen.
+    effect((onCleanup) => {
+      const el = this.buyActions()?.nativeElement;
+      if (!el || typeof IntersectionObserver === 'undefined') { this.actionsVisible.set(true); return; }
+      const io = new IntersectionObserver(([e]) => this.actionsVisible.set(e.isIntersecting), { threshold: 0 });
+      io.observe(el);
+      onCleanup(() => io.disconnect());
+    });
+    effect(() => document.body.classList.toggle('has-buy-bar', this.showBar()));
+    inject(DestroyRef).onDestroy(() => document.body.classList.remove('has-buy-bar'));
+  }
+
+  readonly buyActions = viewChild<ElementRef<HTMLElement>>('buyActions');
+  private readonly actionsVisible = signal(true);
+  readonly showBar = computed(() => {
+    const sz = this.selectedSize();
+    return !!this.product() && !!sz && sizeAvailable(sz) && !this.actionsVisible();
+  });
+
+  scrollToReviews(): void {
+    document.getElementById('reviews')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   effSize = sizeEffectivePrice;

@@ -40,3 +40,14 @@ testem.log
 # System files
 .DS_Store
 Thumbs.db
+
+# Secrets — never commit (Wrangler local vars, env files, service-account keys)
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+*firebase-adminsdk*.json
+*service-account*.json
+
+# Throwaway local scripts
+.tmp-*

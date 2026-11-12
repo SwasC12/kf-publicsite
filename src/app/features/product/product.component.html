@@ -5,15 +5,19 @@
       <div class="product-detail reveal">
         <div class="pd-gallery">
           <div class="pd-image">
-            @if (mainImage(p)) { <img [src]="mainImage(p)" [alt]="p.name" (error)="imgErr($event)" /> }
+            @if (mainImage(p)) { <img [src]="mainImage(p)" [alt]="p.name" decoding="async" (error)="imgErr($event)" /> }
             @else { <span class="thumb-fallback"><app-icon name="droplet" [size]="72" /></span> }
-            @if (onSale(p)) { <span class="sale-badge">Sale</span> }
+            <span class="badges">
+              @if (selectedSize() && !available(selectedSize()!)) { <span class="badge-tag dark">Sold out</span> }
+              @else if (onSale(p)) { <span class="badge-tag gold">Sale</span> }
+            </span>
           </div>
           @if (images(p).length > 1) {
-            <div class="pd-thumbs">
+            <div class="pd-thumbs" role="group" aria-label="Product images">
               @for (img of images(p); track img; let i = $index) {
-                <button class="pd-thumb" [class.on]="i === activeImg()" (click)="activeImg.set(i)">
-                  <img [src]="img" [alt]="p.name" (error)="imgErr($event)" />
+                <button type="button" class="pd-thumb" [class.on]="i === activeImg()" (click)="activeImg.set(i)"
+                        [attr.aria-label]="'Show image ' + (i + 1)" [attr.aria-pressed]="i === activeImg()">
+                  <img [src]="img" alt="" loading="lazy" (error)="imgErr($event)" />
                 </button>
               }
             </div>
@@ -27,100 +31,123 @@
               @if (p.category) { <span class="pd-tag">{{ p.category }}</span> }
             </div>
           }
-          <h1>{{ p.name }}</h1>
+          <h1 class="pd-name">{{ p.name }}</h1>
           @if (p.inspiredBy) {
             <p class="pd-inspired">Smells like <strong>{{ p.inspiredBy }}</strong></p>
-            <p class="pd-disclaimer">Our own interpretation — not affiliated with the original brand.</p>
-          }
-          @if (sizes().length > 1) {
-            <div class="size-picker" role="group" aria-label="Select size">
-              @for (o of sizes(); track o.key) {
-                <button type="button" class="size-chip" [class.active]="selectedSizeKey() === o.key"
-                        [disabled]="!available(o.size)" (click)="selectSize(o.key)">
-                  <span>{{ o.size.size }}</span>
-                  <em>{{ price(effSize(o.size)) }}</em>
-                </button>
-              }
-            </div>
           }
 
           @if ((p.ratingCount || 0) > 0) {
-            <div class="rating-row">
-              <span class="stars">
-                @for (s of [1,2,3,4,5]; track s) { <app-icon name="star" [size]="16" [filled]="s <= avgRounded(p)" /> }
+            <a class="rating-row" href="#reviews" (click)="$event.preventDefault(); scrollToReviews()">
+              <span class="stars" aria-hidden="true">
+                @for (s of [1,2,3,4,5]; track s) { <app-icon name="star" [size]="15" [filled]="s <= avgRounded(p)" /> }
               </span>
-              <span class="rating-meta">{{ avg(p).toFixed(1) }} ({{ p.ratingCount }})</span>
-            </div>
+              <span class="rating-meta">{{ avg(p).toFixed(1) }} · {{ p.ratingCount }} {{ p.ratingCount === 1 ? 'review' : 'reviews' }}</span>
+            </a>
           }
 
           @if (selectedSize(); as sz) {
             <div class="pd-price">
-              @if (saleSize(sz)) { <span class="was">{{ price(sz.price) }}</span> }
-              {{ price(effSize(sz)) }}
+              @if (saleSize(sz)) { <span class="was"><span class="sr-only">Was </span>{{ price(sz.price) }}</span> }
+              <span class="now">{{ price(effSize(sz)) }}</span>
+              @if (sz.size) { <span class="pd-price-size">/ {{ sz.size }}</span> }
             </div>
+          }
 
+          @if (sizes().length > 1) {
+            <div class="size-block">
+              <p class="field-label" id="size-label">Size</p>
+              <div class="size-picker" role="radiogroup" aria-labelledby="size-label">
+                @for (o of sizes(); track o.key) {
+                  <button type="button" role="radio" class="size-chip" [class.active]="selectedSizeKey() === o.key"
+                          [attr.aria-checked]="selectedSizeKey() === o.key" [class.unavailable]="!available(o.size)"
+                          (click)="selectSize(o.key)">
+                    <span>{{ o.size.size }}</span>
+                    <em>{{ available(o.size) ? price(effSize(o.size)) : 'Sold out' }}</em>
+                  </button>
+                }
+              </div>
+            </div>
+          }
+
+          @if (selectedSize(); as sz) {
             @if (sz.inStock && sz.stockQty != null && sz.stockQty > 0 && sz.stockQty <= 5) {
               <p class="stock-low"><app-icon name="droplet" [size]="14" /> Only {{ sz.stockQty }} left</p>
             }
 
-            @if (p.description) { <p class="pd-desc">{{ p.description }}</p> }
-
             @if (available(sz)) {
-              <div class="qty-row">
-                <button class="qbtn" (click)="dec()" [disabled]="qty() <= 1"><app-icon name="minus" [size]="16" /></button>
-                <span class="qval">{{ qty() }}</span>
-                <button class="qbtn" (click)="inc()" [disabled]="sz.stockQty != null && qty() >= sz.stockQty"><app-icon name="plus" [size]="16" /></button>
-              </div>
-              <div class="pd-actions">
-                <button class="btn primary big" (click)="add(p)"><app-icon name="cart" [size]="18" /> Add to cart</button>
-                <button class="btn big save-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)">
-                  <app-icon name="heart" [size]="18" [filled]="fav.has(p.id)" /> {{ fav.has(p.id) ? 'Saved' : 'Save' }}
+              <div class="pd-buy" #buyActions>
+                <div class="qty-row" role="group" aria-label="Quantity">
+                  <button type="button" class="qbtn" (click)="dec()" [disabled]="qty() <= 1" aria-label="Decrease quantity"><app-icon name="minus" [size]="16" /></button>
+                  <span class="qval" aria-live="polite">{{ qty() }}</span>
+                  <button type="button" class="qbtn" (click)="inc()" [disabled]="sz.stockQty != null && qty() >= sz.stockQty" aria-label="Increase quantity"><app-icon name="plus" [size]="16" /></button>
+                </div>
+                <button type="button" class="btn primary big add-main" (click)="add(p)"><app-icon name="bag" [size]="18" /> Add to cart</button>
+                <button type="button" class="btn big icon-only save-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)"
+                        [attr.aria-pressed]="fav.has(p.id)" [attr.aria-label]="fav.has(p.id) ? 'Remove from saved' : 'Save for later'">
+                  <app-icon name="heart" [size]="18" [filled]="fav.has(p.id)" />
                 </button>
               </div>
             } @else {
-              <div class="oos-note">Currently sold out in this size</div>
-              @if (notified()) {
-                <p class="promo-ok">Thanks! We'll email you as soon as it's back in stock.</p>
-              } @else {
-                <div class="notify-box">
-                  <p>Want it? Get an email the moment it's back in stock:</p>
-                  <div class="promo-row">
-                    <input type="email" [(ngModel)]="notifyEmail" name="ne" placeholder="you@email.com" />
-                    <button class="btn primary" (click)="notifyMe(p)" [disabled]="notifying() || !notifyEmail.trim()">
-                      {{ notifying() ? '…' : 'Notify me' }}
-                    </button>
-                  </div>
-                </div>
-              }
-              <button class="btn big save-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)">
-                <app-icon name="heart" [size]="18" [filled]="fav.has(p.id)" /> {{ fav.has(p.id) ? 'Saved' : 'Save' }}
-              </button>
+              <div class="oos-block">
+                <p class="oos-note">Sold out in {{ sz.size || 'this size' }}</p>
+                @if (notified()) {
+                  <p class="field-ok"><app-icon name="check" [size]="14" /> Thanks! We'll email you as soon as it's back in stock.</p>
+                } @else {
+                  <form class="notify-box" (ngSubmit)="notifyMe(p)">
+                    <label for="notify-email">Get an email the moment it's back</label>
+                    <div class="inline-field">
+                      <input id="notify-email" type="email" [(ngModel)]="notifyEmail" name="ne" placeholder="you@email.com"
+                             autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false" required />
+                      <button type="submit" class="btn primary" [disabled]="notifying() || !notifyEmail.trim()">
+                        {{ notifying() ? 'Sending…' : 'Notify me' }}
+                      </button>
+                    </div>
+                  </form>
+                }
+                <button type="button" class="btn save-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)" [attr.aria-pressed]="fav.has(p.id)">
+                  <app-icon name="heart" [size]="16" [filled]="fav.has(p.id)" /> {{ fav.has(p.id) ? 'Saved' : 'Save for later' }}
+                </button>
+              </div>
             }
           }
 
+          <ul class="pd-assure">
+            <li>Secure card payment</li>
+            <li>Nationwide delivery</li>
+            <li>Long-lasting, alcohol-free oil</li>
+          </ul>
+
+          @if (p.description) { <p class="pd-desc">{{ p.description }}</p> }
+
           @if (p.notesTop || p.notesHeart || p.notesBase) {
             <div class="notes-block">
-              <h3 class="block-title">Fragrance notes</h3>
-              @if (p.notesTop) { <p><strong>Top:</strong> {{ p.notesTop }}</p> }
-              @if (p.notesHeart) { <p><strong>Heart:</strong> {{ p.notesHeart }}</p> }
-              @if (p.notesBase) { <p><strong>Base:</strong> {{ p.notesBase }}</p> }
+              <h2 class="block-title">Fragrance notes</h2>
+              <dl class="notes-list">
+                @if (p.notesTop) { <div><dt>Top</dt><dd>{{ p.notesTop }}</dd></div> }
+                @if (p.notesHeart) { <div><dt>Heart</dt><dd>{{ p.notesHeart }}</dd></div> }
+                @if (p.notesBase) { <div><dt>Base</dt><dd>{{ p.notesBase }}</dd></div> }
+              </dl>
             </div>
           }
 
           @if (p.longDescription) {
             <div class="notes-block">
-              <h3 class="block-title">About this fragrance</h3>
+              <h2 class="block-title">About this fragrance</h2>
               <p class="pd-long">{{ p.longDescription }}</p>
             </div>
           }
 
+          @if (p.inspiredBy) {
+            <p class="pd-disclaimer">Our own interpretation of {{ p.inspiredBy }} — not affiliated with or endorsed by the original brand.</p>
+          }
+
           <!-- Reviews -->
-          <div class="notes-block reviews">
-            <h3 class="block-title">Reviews @if ((p.ratingCount || 0) > 0) { <span class="dim">({{ p.ratingCount }})</span> }</h3>
+          <section class="notes-block reviews" id="reviews" aria-labelledby="reviews-title">
+            <h2 class="block-title" id="reviews-title">Reviews @if ((p.ratingCount || 0) > 0) { <span class="dim">({{ p.ratingCount }})</span> }</h2>
             @for (r of reviewsSvc.reviews(); track r.id) {
               <div class="review">
                 <div class="review-head">
-                  <span class="stars">@for (s of [1,2,3,4,5]; track s) { <app-icon name="star" [size]="13" [filled]="s <= r.rating" /> }</span>
+                  <span class="stars" [attr.aria-label]="r.rating + ' out of 5 stars'">@for (s of [1,2,3,4,5]; track s) { <app-icon name="star" [size]="13" [filled]="s <= r.rating" /> }</span>
                   <strong>{{ r.name }}</strong>
                 </div>
                 @if (r.text) { <p class="review-text">{{ r.text }}</p> }
@@ -130,50 +157,82 @@
             }
 
             @if (reviewSent()) {
-              <p class="promo-ok">Thanks! Your review will appear once we've approved it.</p>
+              <p class="field-ok"><app-icon name="check" [size]="14" /> Thanks! Your review will appear once we've approved it.</p>
             } @else {
-              <div class="review-form">
-                <div class="star-pick">
+              <form class="review-form" (ngSubmit)="submitReview(p)">
+                <p class="field-label" id="rating-label">Your rating</p>
+                <div class="star-pick" role="radiogroup" aria-labelledby="rating-label">
                   @for (s of [1,2,3,4,5]; track s) {
-                    <button type="button" class="star-btn" (click)="revRating.set(s)" [attr.aria-label]="s + ' stars'">
+                    <button type="button" role="radio" class="star-btn" (click)="revRating.set(s)"
+                            [attr.aria-checked]="revRating() === s" [attr.aria-label]="s + (s === 1 ? ' star' : ' stars')">
                       <app-icon name="star" [size]="24" [filled]="s <= revRating()" />
                     </button>
                   }
                 </div>
-                <input type="text" [(ngModel)]="revName" name="rn" placeholder="Your name" maxlength="60" />
-                <textarea [(ngModel)]="revText" name="rt" rows="3" placeholder="Share what you think…" maxlength="600"></textarea>
-                <button class="btn primary" (click)="submitReview(p)" [disabled]="reviewSending()">
+                <div class="field">
+                  <label for="rev-name">Name</label>
+                  <input id="rev-name" type="text" [(ngModel)]="revName" name="rn" maxlength="60" autocomplete="given-name" />
+                </div>
+                <div class="field">
+                  <label for="rev-text">Review</label>
+                  <textarea id="rev-text" [(ngModel)]="revText" name="rt" rows="3" placeholder="Share what you think…" maxlength="600"></textarea>
+                </div>
+                <button type="submit" class="btn primary" [disabled]="reviewSending()">
                   {{ reviewSending() ? 'Sending…' : 'Post review' }}
                 </button>
-              </div>
+              </form>
             }
-          </div>
+          </section>
         </div>
       </div>
 
       @if (related().length) {
-        <section class="related">
-          <h2 class="section-title">You may also like</h2>
+        <section class="related" aria-labelledby="related-title">
+          <h2 class="section-title" id="related-title">You may also like</h2>
           <div class="grid">
             @for (r of related(); track r.id) {
-              <article class="card">
-                <a class="thumb" [routerLink]="['/product', r.id]">
-                  <img [src]="img(r)" [alt]="r.name" loading="lazy" (error)="imgErr($event)" />
-                  @if (!r.inStock) { <span class="oos-badge">Sold out</span> }
+              <article class="card" [class.sold-out]="!r.inStock">
+                <a class="thumb" [routerLink]="['/product', r.id]" tabindex="-1" aria-hidden="true">
+                  <img [src]="img(r)" alt="" loading="lazy" decoding="async" (error)="imgErr($event)" />
+                  <span class="badges">@if (!r.inStock) { <span class="badge-tag dark">Sold out</span> }</span>
                 </a>
                 <div class="card-body">
-                  <a class="p-name" [routerLink]="['/product', r.id]">{{ r.name }}</a>
                   @if (r.inspiredBy) { <span class="p-inspired">Smells like {{ r.inspiredBy }}</span> }
-                  <div class="p-foot"><span class="p-price">{{ hasSizes(r) ? 'From ' : '' }}{{ price(startingPrice(r)) }}</span></div>
+                  <a class="p-name" [routerLink]="['/product', r.id]">{{ r.name }}</a>
+                  <div class="p-foot">
+                    <span class="p-price">@if (hasSizes(r)) { <span class="from">From</span> }<span class="now">{{ price(startingPrice(r)) }}</span></span>
+                    <a class="add-btn ghost" [routerLink]="['/product', r.id]">View</a>
+                  </div>
                 </div>
               </article>
             }
           </div>
         </section>
       }
+
+      @if (showBar() && selectedSize(); as sz) {
+        <div class="buy-bar" role="region" aria-label="Quick add to cart">
+          <div class="buy-bar-info">
+            <span class="buy-bar-name">{{ p.name }}</span>
+            <span class="buy-bar-price">{{ price(effSize(sz)) }}@if (sz.size) { · {{ sz.size }} }</span>
+          </div>
+          <button type="button" class="btn primary" (click)="add(p)"><app-icon name="bag" [size]="16" /> Add to cart</button>
+        </div>
+      }
     } @else if (svc.loading()) {
-      <div class="notice">Loading…</div>
+      <div class="product-detail" aria-busy="true" aria-label="Loading fragrance">
+        <div class="pd-image sk"></div>
+        <div class="pd-info">
+          <div class="sk-line" style="width:40%"></div>
+          <div class="sk-line tall" style="width:75%"></div>
+          <div class="sk-line" style="width:30%"></div>
+        </div>
+      </div>
     } @else {
-      <div class="notice"><p>Fragrance not found.</p><a class="btn" routerLink="/">Back to shop</a></div>
+      <div class="empty-state">
+        <app-icon name="droplet" [size]="36" />
+        <h1 class="empty-title">Fragrance not found</h1>
+        <p>It may have been renamed or retired.</p>
+        <a class="btn primary" routerLink="/">Back to shop</a>
+      </div>
     }
-  

@@ -144,6 +144,16 @@ export class ShopComponent implements OnDestroy {
 
   bannerErr(ev: Event): void { (ev.target as HTMLImageElement).style.display = 'none'; }
 
+  hasFilters(): boolean {
+    return this.category() !== 'all' || this.gender() !== 'all' || this.inStockOnly();
+  }
+  clearFilters(): void {
+    this.category.set('all');
+    this.gender.set('all');
+    this.inStockOnly.set(false);
+  }
+  reload(): void { location.reload(); }
+
   add(p: Product): void { this.cart.add(p); }
 
   incCard(p: Product): void {

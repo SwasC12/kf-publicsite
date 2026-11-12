@@ -3,12 +3,11 @@
     <section class="hero" [class.has-image]="!!hero().heroImageUrl"
              [style.background-image]="hero().heroImageUrl ? 'url(' + bannerImg(hero().heroImageUrl) + ')' : null">
       <div class="hero-inner">
-        <img class="hero-mark" src="logo-mark.png" alt="Kauā Fragrances" />
+        <img class="hero-mark" src="logo-mark.png" alt="" width="104" height="104" />
         <h1>{{ hero().heroTitle || 'KAUĀ FRAGRANCES' }}</h1>
         <p class="tagline">{{ hero().heroSubtitle || '"one spray to last the day"' }}</p>
-        @if (hero().heroCtaText) {
-          <button class="btn primary big hero-cta" (click)="cta(hero().heroCtaLink)">{{ hero().heroCtaText }}</button>
-        }
+        <button type="button" class="btn hero-cta" [class.primary]="!hero().heroImageUrl" [class.light]="!!hero().heroImageUrl"
+                (click)="cta(hero().heroCtaLink)">{{ hero().heroCtaText || 'Shop the collection' }}</button>
       </div>
     </section>
 
@@ -67,54 +66,70 @@
     }
 
     <!-- Shop -->
-    <section id="shop" class="shop-section reveal">
+    <section id="shop" class="shop-section reveal" aria-labelledby="shop-title">
       <div class="shop-toolbar">
-        <h2 class="section-title">Shop all</h2>
-        <div class="toolbar-right">
-          <input class="search" type="search" placeholder="Search name or 'smells like'…"
-                 [value]="search()" (input)="search.set($any($event.target).value)" />
-          <select class="sort-select" [ngModel]="sort()" (ngModelChange)="sort.set($event)" aria-label="Sort">
-            <option value="featured">Featured</option>
-            <option value="newest">Newest</option>
-            <option value="price-asc">Price: low to high</option>
-            <option value="price-desc">Price: high to low</option>
-            <option value="name">Name A–Z</option>
-          </select>
+        <h2 class="section-title" id="shop-title">{{ gender() !== 'all' ? gender() : 'Shop all' }}</h2>
+        <div class="toolbar-controls">
+          <label class="search-field">
+            <span class="sr-only">Search fragrances</span>
+            <app-icon name="search" [size]="16" />
+            <input class="search" type="search" placeholder="Search name or 'smells like'…" enterkeyhint="search"
+                   [value]="search()" (input)="search.set($any($event.target).value)" />
+          </label>
+          <label class="sort-field">
+            <span class="sr-only">Sort by</span>
+            <select class="sort-select" [ngModel]="sort()" (ngModelChange)="sort.set($event)">
+              <option value="featured">Featured</option>
+              <option value="newest">Newest</option>
+              <option value="price-asc">Price: low–high</option>
+              <option value="price-desc">Price: high–low</option>
+              <option value="name">Name A–Z</option>
+            </select>
+          </label>
         </div>
       </div>
 
-      <div class="chips">
-          <button class="chip" [class.active]="category() === 'all' && gender() === 'all' && !inStockOnly()" (click)="category.set('all'); gender.set('all'); inStockOnly.set(false)">All</button>
-          <button class="chip" [class.active]="inStockOnly()" (click)="inStockOnly.set(!inStockOnly())">In stock</button>
-          @for (g of genders(); track g) {
-            <button class="chip" [class.active]="gender() === g" (click)="gender.set(gender() === g ? 'all' : g)">{{ g }}</button>
-          }
-          @for (c of categories(); track c) {
-            <button class="chip" [class.active]="category() === c" (click)="category.set(category() === c ? 'all' : c)">{{ c }}</button>
-          }
+      <div class="chips" role="group" aria-label="Filter fragrances">
+        <button type="button" class="chip" [class.active]="!hasFilters()" [attr.aria-pressed]="!hasFilters()" (click)="clearFilters()">All</button>
+        <button type="button" class="chip" [class.active]="inStockOnly()" [attr.aria-pressed]="inStockOnly()" (click)="inStockOnly.set(!inStockOnly())">In stock</button>
+        @for (g of genders(); track g) {
+          <button type="button" class="chip" [class.active]="gender() === g" [attr.aria-pressed]="gender() === g" (click)="gender.set(gender() === g ? 'all' : g)">{{ g }}</button>
+        }
+        @for (c of categories(); track c) {
+          <button type="button" class="chip" [class.active]="category() === c" [attr.aria-pressed]="category() === c" (click)="category.set(category() === c ? 'all' : c)">{{ c }}</button>
+        }
       </div>
 
       @if (svc.loading()) {
-        <div class="grid">
+        <div class="grid" aria-busy="true" aria-label="Loading fragrances">
           @for (s of [1,2,3,4,5,6,7,8]; track s) {
-            <div class="card skeleton"><div class="thumb sk"></div><div class="sk-line"></div><div class="sk-line short"></div></div>
+            <div class="card skeleton" aria-hidden="true"><div class="thumb sk"></div><div class="sk-line"></div><div class="sk-line short"></div></div>
           }
         </div>
       } @else if (svc.error()) {
-        <div class="notice">{{ svc.error() }}</div>
+        <div class="empty-state error" role="alert">
+          <p>{{ svc.error() }}</p>
+          <button type="button" class="btn" (click)="reload()">Try again</button>
+        </div>
       } @else if (filtered().length === 0) {
-        <div class="notice">
-          <app-icon name="bag" [size]="40" />
-          <p>{{ search() || category() !== 'all' || gender() !== 'all' ? 'No fragrances match those filters.' : 'No fragrances available right now — check back soon.' }}</p>
+        <div class="empty-state">
+          <app-icon name="search" [size]="32" />
+          @if (search() || hasFilters()) {
+            <p>No fragrances match {{ search() ? '“' + search() + '”' : 'those filters' }}.</p>
+            <button type="button" class="btn" (click)="search.set(''); clearFilters()">Clear search &amp; filters</button>
+          } @else {
+            <p>No fragrances available right now — check back soon.</p>
+          }
         </div>
       } @else {
+        <p class="result-count" aria-live="polite">{{ filtered().length }} {{ filtered().length === 1 ? 'fragrance' : 'fragrances' }}</p>
         <div class="grid">
           @for (p of visible(); track p.id) { <ng-container *ngTemplateOutlet="card; context: { $implicit: p }" /> }
         </div>
         @if (filtered().length > visible().length) {
           <div class="load-more-row">
             <p class="load-count">Showing {{ visible().length }} of {{ filtered().length }}</p>
-            <button class="btn light big" (click)="showMore()">Load more</button>
+            <button type="button" class="btn" (click)="showMore()">Load more</button>
           </div>
         }
       }
@@ -122,49 +137,52 @@
 
     <!-- Reusable product card -->
     <ng-template #card let-p>
-      <article class="card">
-        <button class="fav-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)"
-                [attr.aria-label]="fav.has(p.id) ? 'Remove from saved' : 'Save'">
+      <article class="card" [class.sold-out]="!anyAvailable(p)">
+        <button type="button" class="fav-btn" [class.on]="fav.has(p.id)" (click)="fav.toggle(p.id)"
+                [attr.aria-pressed]="fav.has(p.id)"
+                [attr.aria-label]="(fav.has(p.id) ? 'Remove ' : 'Save ') + p.name + (fav.has(p.id) ? ' from saved' : '')">
           <app-icon name="heart" [size]="18" [filled]="fav.has(p.id)" />
         </button>
-        <a class="thumb" [routerLink]="['/product', p.id]">
-          <img [src]="img(p)" [alt]="p.name" loading="lazy" (error)="imgErr($event)" />
-          @if (anySale(p)) { <span class="sale-badge">Sale</span> }
-          @if (!anyAvailable(p)) { <span class="oos-badge">Sold out</span> }
+        <a class="thumb" [routerLink]="['/product', p.id]" tabindex="-1" aria-hidden="true">
+          <img [src]="img(p)" alt="" loading="lazy" decoding="async" (error)="imgErr($event)" />
+          <span class="badges">
+            @if (!anyAvailable(p)) { <span class="badge-tag dark">Sold out</span> }
+            @else if (anySale(p)) { <span class="badge-tag gold">Sale</span> }
+          </span>
         </a>
         <div class="card-body">
+          @if (p.inspiredBy) { <span class="p-inspired">Smells like {{ p.inspiredBy }}</span> }
           <a class="p-name" [routerLink]="['/product', p.id]">{{ p.name }}</a>
           @if ((p.ratingCount || 0) > 0) {
-            <span class="stars card-stars">
+            <span class="stars card-stars" [attr.aria-label]="'Rated ' + avgRounded(p) + ' out of 5'">
               @for (s of [1,2,3,4,5]; track s) { <app-icon name="star" [size]="12" [filled]="s <= avgRounded(p)" /> }
-              <span class="rating-meta">({{ p.ratingCount }})</span>
+              <span class="rating-meta" aria-hidden="true">({{ p.ratingCount }})</span>
             </span>
           }
-          @if (p.inspiredBy) { <span class="p-inspired">Smells like {{ p.inspiredBy }}</span> }
-          @if (p.size) { <span class="p-size">{{ p.size }}</span> }
+          @if (p.size && !hasSizes(p)) { <span class="p-size">{{ p.size }}</span> }
           @if (p.inStock && p.stockQty != null && p.stockQty > 0 && p.stockQty <= 5) {
             <span class="stock-low">Only {{ p.stockQty }} left</span>
           }
           <div class="p-foot">
             <span class="p-price">
-              @if (cardWas(p); as was) { <span class="was">{{ price(was) }}</span> }
-              {{ hasSizes(p) ? 'From ' : '' }}{{ price(cardPrice(p)) }}
+              @if (hasSizes(p)) { <span class="from">From</span> }
+              @if (cardWas(p); as was) { <span class="was"><span class="sr-only">Was </span>{{ price(was) }}</span> }
+              <span class="now">{{ price(cardPrice(p)) }}</span>
             </span>
-            @if (hasSizes(p)) {
+            @if (!anyAvailable(p)) {
+              <a class="add-btn ghost" [routerLink]="['/product', p.id]">Notify me</a>
+            } @else if (hasSizes(p)) {
               <a class="add-btn" [routerLink]="['/product', p.id]">Choose size</a>
-            } @else if (p.inStock && (p.stockQty == null || p.stockQty > 0)) {
-              @if (cart.qtyOf(p.id) > 0) {
-                <div class="qty-row small card-qty">
-                  <button class="qbtn" (click)="cart.setQty(p.id, cart.qtyOf(p.id) - 1)" aria-label="Less"><app-icon name="minus" [size]="14" /></button>
-                  <span class="qval">{{ cart.qtyOf(p.id) }}</span>
-                  <button class="qbtn" (click)="incCard(p)" [disabled]="p.stockQty != null && cart.qtyOf(p.id) >= p.stockQty" aria-label="More"><app-icon name="plus" [size]="14" /></button>
-                </div>
-              } @else {
-                <button class="add-btn" (click)="add(p)" title="Add to cart"><app-icon name="plus" [size]="16" /> Add</button>
-              }
-            } @else { <button class="add-btn disabled" disabled>Sold out</button> }
+            } @else if (cart.qtyOf(p.id) > 0) {
+              <div class="qty-row small card-qty">
+                <button type="button" class="qbtn" (click)="cart.setQty(p.id, cart.qtyOf(p.id) - 1)" [attr.aria-label]="'One less ' + p.name"><app-icon name="minus" [size]="14" /></button>
+                <span class="qval" aria-live="polite">{{ cart.qtyOf(p.id) }}</span>
+                <button type="button" class="qbtn" (click)="incCard(p)" [disabled]="p.stockQty != null && cart.qtyOf(p.id) >= p.stockQty" [attr.aria-label]="'One more ' + p.name"><app-icon name="plus" [size]="14" /></button>
+              </div>
+            } @else {
+              <button type="button" class="add-btn" (click)="add(p)" [attr.aria-label]="'Add ' + p.name + ' to cart'"><app-icon name="plus" [size]="14" /> Add</button>
+            }
           </div>
         </div>
       </article>
     </ng-template>
-  

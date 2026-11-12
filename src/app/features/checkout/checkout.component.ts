@@ -1,7 +1,6 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
-import { NgTemplateOutlet } from '@angular/common';
+import { Component, DestroyRef, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { RouterLink } from '@angular/router';
 import { CartService } from '@core/services/cart.service';
 import { OrdersService } from '@core/services/orders.service';
 import { AuthService } from '@core/services/auth.service';
@@ -12,10 +11,12 @@ import { discountError, computeDiscount, DiscountLine } from '@core/utils/discou
 import { SA_PROVINCES, formatPrice, isValidEmail, isValidPhone } from '@core/utils';
 import { IconComponent } from '@shared/components/icon/icon.component';
 
+type Field = 'name' | 'email' | 'phone' | 'line1' | 'city' | 'terms';
+
 @Component({
   selector: 'app-checkout',
   standalone: true,
-  imports: [FormsModule, RouterLink, NgTemplateOutlet, IconComponent],
+  imports: [FormsModule, RouterLink, IconComponent],
   templateUrl: './checkout.component.html',
   styleUrl: './checkout.component.scss',
 })
@@ -25,7 +26,6 @@ export class CheckoutComponent {
   readonly auth = inject(AuthService);
   readonly settings = inject(SettingsService);
   readonly cust = inject(CustomerService);
-  private router = inject(Router);
 
   name = ''; email = ''; phone = ''; note = '';
   delivery: Address = emptyAddress();
@@ -34,17 +34,13 @@ export class CheckoutComponent {
   referral = '';
   readonly applied = signal<Discount | null>(null);
   readonly promoError = signal<string | null>(null);
-  readonly emailTouched = signal(false);
-  readonly phoneTouched = signal(false);
-  readonly termsError = signal(false);
+  readonly promoBusy = signal(false);
+  /** Fields the customer has left at least once — errors only show after that (or after submit). */
+  readonly touched = signal<ReadonlySet<Field>>(new Set());
+  readonly submitted = signal(false);
+  readonly redirecting = signal(false);
   termsAccepted = false;
   readonly provinces = SA_PROVINCES;
-  readonly emailError = computed(() =>
-    this.emailTouched() && !isValidEmail(this.email) ? 'Please enter a valid email address.' : null,
-  );
-  readonly phoneError = computed(() =>
-    this.phoneTouched() && !isValidPhone(this.phone) ? 'Enter a valid SA number, e.g. 082 123 4567.' : null,
-  );
 
   readonly threshold = computed(() => this.settings.settings().freeDeliveryThreshold ?? null);
   readonly fee = computed(() => (this.method() === 'delivery' ? this.settings.deliveryFeeFor(this.cart.total()) : 0));
@@ -59,10 +55,52 @@ export class CheckoutComponent {
 
   price = formatPrice;
 
+  constructor() {
+    // Lets global styles move floating widgets out of the way of the pay button.
+    document.body.classList.add('on-checkout');
+    inject(DestroyRef).onDestroy(() => document.body.classList.remove('on-checkout'));
+
+    // Default to whichever method is enabled.
+    effect(() => {
+      const s = this.settings.settings();
+      if (s.deliveryEnabled === false && s.collectionEnabled !== false) this.method.set('collection');
+    });
+    effect(() => {
+      const p = this.cust.profile();
+      if (p) {
+        if (!this.name) this.name = p.name;
+        if (!this.email) this.email = p.email;
+        if (!this.phone) this.phone = p.phone;
+        if (!this.delivery.line1 && p.delivery.line1) this.delivery = { ...p.delivery };
+      }
+    });
+  }
+
+  touch(f: Field): void {
+    if (this.touched().has(f)) return;
+    this.touched.update((s) => new Set(s).add(f));
+  }
+
+  /** Inline validation message for a field, or null when it is fine / not yet visited. */
+  error(f: Field): string | null {
+    if (!this.submitted() && !this.touched().has(f)) return null;
+    switch (f) {
+      case 'name': return this.name.trim() ? null : 'Please enter your full name.';
+      case 'email': return isValidEmail(this.email) ? null : 'Please enter a valid email address.';
+      case 'phone': return isValidPhone(this.phone) ? null : 'Enter a valid SA number, e.g. 082 123 4567.';
+      case 'line1':
+        return this.method() === 'collection' || this.delivery.line1.trim() ? null : 'Please enter your street address.';
+      case 'city':
+        return this.method() === 'collection' || this.delivery.city.trim() ? null : 'Please enter your city or town.';
+      case 'terms': return this.termsAccepted ? null : 'Please accept the terms to continue.';
+    }
+  }
+
   async applyPromo(): Promise<void> {
     const code = this.promo.trim().toUpperCase();
-    if (!code) return;
+    if (!code || this.promoBusy()) return;
     this.promoError.set(null);
+    this.promoBusy.set(true);
     try {
       // Validated on the server; codes are no longer readable from the browser.
       const res = await fetch('/api/validate-promo', {
@@ -85,26 +123,11 @@ export class CheckoutComponent {
       this.applied.set(d);
     } catch {
       this.promoError.set('Could not check that code.');
+    } finally {
+      this.promoBusy.set(false);
     }
   }
   clearPromo(): void { this.applied.set(null); this.promo = ''; this.promoError.set(null); }
-
-  constructor() {
-    // Default to whichever method is enabled.
-    effect(() => {
-      const s = this.settings.settings();
-      if (s.deliveryEnabled === false && s.collectionEnabled !== false) this.method.set('collection');
-    });
-    effect(() => {
-      const p = this.cust.profile();
-      if (p) {
-        if (!this.name) this.name = p.name;
-        if (!this.email) this.email = p.email;
-        if (!this.phone) this.phone = p.phone;
-        if (!this.delivery.line1 && p.delivery.line1) this.delivery = { ...p.delivery };
-      }
-    });
-  }
 
   feeLabel(): string {
     const f = this.settings.deliveryFeeFor(this.cart.total());
@@ -126,10 +149,17 @@ export class CheckoutComponent {
   }
 
   async place(): Promise<void> {
-    this.emailTouched.set(true);
-    this.phoneTouched.set(true);
-    this.termsError.set(!this.termsAccepted);
-    if (!this.valid()) return;
+    if (this.orders.placing() || this.redirecting()) return;
+    this.submitted.set(true);
+    if (!this.valid()) {
+      // Take the customer to the first field that needs attention.
+      setTimeout(() => {
+        const el = document.querySelector<HTMLElement>('.checkout-form [aria-invalid="true"]');
+        el?.focus();
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 0);
+      return;
+    }
     const order = await this.orders.place(
       { name: this.name.trim(), email: this.email.trim(), phone: this.phone.trim(), note: this.note.trim() || undefined },
       this.delivery,
@@ -139,20 +169,18 @@ export class CheckoutComponent {
       this.fee(),
       this.applied()?.code,
       this.discountAmount(),
-      'yoco',
       this.referral.trim(),
     );
-    if (order) {
+    const redirect = this.orders.redirectUrl();
+    if (order && redirect) {
       void this.cust.refresh();
-      const redirect = this.orders.redirectUrl();
-      if (redirect) {
-        // Keep the cart until the payment is confirmed. If Yoco fails or the
-        // customer cancels, their items are still there to try again.
-        window.location.href = redirect;
-        return;
-      }
-      this.cart.clear();
-      this.router.navigate(['/order-confirmed']);
+      // Keep the cart until the payment is confirmed. If Yoco fails or the
+      // customer cancels, their items are still there to try again.
+      this.redirecting.set(true);
+      window.location.href = redirect;
+      return;
     }
+    // Bring the error message into view (it sits above the pay button).
+    setTimeout(() => document.getElementById('checkout-error')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 0);
   }
 }

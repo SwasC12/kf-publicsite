@@ -107,7 +107,8 @@ export interface Order {
   customer: OrderContact;
   delivery: Address;
   deliveryMethod?: DeliveryMethod;
-  paymentMethod?: 'eft' | 'yoco';
+  /** Online orders are always 'yoco'. Orders rung up on the admin POS may carry other values (cash, card…). */
+  paymentMethod?: string;
   yocoCheckoutId?: string;
   deliveryFee?: number;
   subtotal?: number;
@@ -166,11 +167,6 @@ export interface StoreSettings {
   whatsappNumber?: string; // international, digits only, e.g. 27821234567
   contactEmail?: string;
   contactPhone?: string;
-  bankName?: string;
-  bankAccountName?: string;
-  bankAccountNumber?: string;
-  bankBranchCode?: string;
-  bankAccountType?: string;
   companyName?: string;
   companyRegistration?: string;
   companyAddress?: string;

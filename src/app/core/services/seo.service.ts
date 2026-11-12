@@ -6,7 +6,7 @@ import { optimizedImage, sizeOptions, sizeEffectivePrice } from '@core/utils';
 
 const SITE = 'Kauā Fragrances';
 const BASE = 'https://kauafragrances.co.za';
-const DEFAULT_DESC = 'Inspired by designer fragrances — long-lasting, affordable, beautifully made. One spray to last the day. Order online, pay by EFT.';
+const DEFAULT_DESC = 'Inspired by designer fragrances — long-lasting, affordable, beautifully made. One spray to last the day. Order online and pay securely by card.';
 const DEFAULT_IMG = `${BASE}/logo-lockup.png`;
 
 @Injectable({ providedIn: 'root' })

@@ -40,6 +40,12 @@ export default {
         return new Response("ok", { status: 200, headers: { "Content-Type": "text/plain" } });
       }
       if (request.method !== "POST") return cors(json({ error: "Method not allowed" }, 405), request);
+      // Edge rate limit shared by every Worker instance (the in-memory limits
+      // below only see one isolate). Yoco's webhook is signature-checked instead.
+      if (url.pathname !== "/api/yoco/webhook" &&
+          !(await edgeLimit(env, url.pathname + ":" + clientIp(request)))) {
+        return cors(json({ error: "Too many requests. Please wait a minute." }, 429), request);
+      }
       if (url.pathname === "/api/place-order") return cors(await handlePlaceOrder(request, env), request);
       if (url.pathname === "/api/validate-promo") return cors(await handleValidatePromo(request, env), request);
       if (url.pathname === "/api/lookup-order") return cors(await handleLookupOrder(request, env), request);
@@ -79,6 +85,17 @@ function withSecurityHeaders(res) {
   headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   headers.set("Content-Security-Policy", CSP);
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers: headers });
+}
+
+/** Cloudflare Rate Limiting binding (wrangler.jsonc → ratelimits). Fails open if absent. */
+async function edgeLimit(env, key) {
+  if (!env.API_LIMITER || typeof env.API_LIMITER.limit !== "function") return true;
+  try {
+    const r = await env.API_LIMITER.limit({ key: key });
+    return !r || r.success !== false;
+  } catch (e) {
+    return true;
+  }
 }
 
 const rateBuckets = new Map();
@@ -216,34 +233,8 @@ function sleep(ms) {
 
 // Release a just-placed order when the payment provider could not be reached.
 async function cancelNewOrder(env, order) {
-  if (!order || !order.id) return;
   try {
-    const fs = new Firestore(env);
-    for (const item of order.items || []) {
-      try {
-        const doc = await fs.get("products/" + item.productId);
-        if (!doc) continue;
-        if (item.sizeKey && doc.data.sizes && doc.data.sizes[item.sizeKey]) {
-          const sizes = JSON.parse(JSON.stringify(doc.data.sizes));
-          const size = sizes[item.sizeKey];
-          if (size.stockQty != null) size.stockQty = Number(size.stockQty) + Number(item.qty);
-          size.inStock = true;
-          await fs.patch("products/" + item.productId, { sizes: sizes });
-        } else if (doc.data.stockQty != null) {
-          await fs.patch("products/" + item.productId, {
-            stockQty: Number(doc.data.stockQty) + Number(item.qty),
-            inStock: true,
-          });
-        }
-      } catch (e) { /* keep going */ }
-    }
-    await fs.patch("orders/" + order.id, {
-      status: "cancelled",
-      cancelledReason: "payment-unavailable",
-      stockRestored: true,
-      updatedAt: Date.now(),
-    });
-    await fs.patch("orderStatus/" + order.reference, { status: "cancelled", updatedAt: Date.now() });
+    await releaseOrder(env, order, "payment-unavailable");
   } catch (e) { /* best effort */ }
 }
 
@@ -466,7 +457,136 @@ async function verifyYocoSignature(request, raw, secret) {
   return false;
 }
 
-// Idempotently marks an order paid, counts the promo use and emails the buyer.
+// Statuses that mean the money is already in. Settling must never move an
+// order backwards from any of these (e.g. shipped -> paid).
+const PAID_LIKE = ["paid", "fulfilled", "shipped", "delivered"];
+
+function isPaidLike(status) {
+  return PAID_LIKE.indexOf(String(status || "")) >= 0;
+}
+
+/** Put an order's stock back. Best effort, item by item. */
+async function restoreStock(fs, order) {
+  for (const item of order.items || []) {
+    try {
+      const doc = await fs.get("products/" + item.productId);
+      if (!doc) continue;
+      if (item.sizeKey && doc.data.sizes && doc.data.sizes[item.sizeKey]) {
+        const sizes = JSON.parse(JSON.stringify(doc.data.sizes));
+        const size = sizes[item.sizeKey];
+        if (size.stockQty != null) size.stockQty = Number(size.stockQty) + Number(item.qty);
+        size.inStock = true;
+        await fs.patch("products/" + item.productId, { sizes: sizes });
+      } else if (doc.data.stockQty != null) {
+        await fs.patch("products/" + item.productId, {
+          stockQty: Number(doc.data.stockQty) + Number(item.qty),
+          inStock: true,
+        });
+      }
+    } catch (e) { /* keep going */ }
+  }
+}
+
+/** Take an order's stock again (used when a late payment revives an expired order). Returns items that were short. */
+async function retakeStock(fs, order) {
+  const short = [];
+  for (const item of order.items || []) {
+    try {
+      const doc = await fs.get("products/" + item.productId);
+      if (!doc) { short.push(item.name || item.productId); continue; }
+      if (item.sizeKey && doc.data.sizes && doc.data.sizes[item.sizeKey]) {
+        const sizes = JSON.parse(JSON.stringify(doc.data.sizes));
+        const size = sizes[item.sizeKey];
+        if (size.stockQty != null) {
+          const have = Number(size.stockQty);
+          if (have < Number(item.qty)) short.push((item.name || item.productId) + (item.size ? " (" + item.size + ")" : ""));
+          size.stockQty = Math.max(0, have - Number(item.qty));
+          if (size.stockQty <= 0) size.inStock = false;
+          await fs.patch("products/" + item.productId, { sizes: sizes });
+        }
+      } else if (doc.data.stockQty != null) {
+        const have = Number(doc.data.stockQty);
+        if (have < Number(item.qty)) short.push(item.name || item.productId);
+        const next = Math.max(0, have - Number(item.qty));
+        const fields = { stockQty: next };
+        if (next <= 0) fields.inStock = false;
+        await fs.patch("products/" + item.productId, fields);
+      }
+    } catch (e) { short.push(item.name || item.productId); }
+  }
+  return short;
+}
+
+/** Adjust a promo code's usage counter by +1/-1. */
+async function bumpDiscount(fs, code, delta) {
+  if (!code) return;
+  try {
+    const dd = await fs.get("discounts/" + String(code).toUpperCase());
+    if (!dd) return;
+    await fs.patch("discounts/" + String(code).toUpperCase(), {
+      usedCount: Math.max(0, Number(dd.data.usedCount || 0) + delta),
+    });
+  } catch (e) { /* best effort */ }
+}
+
+/** Give a referral reward back to (+1) or take it from (-1) the customer. */
+async function bumpReward(fs, uid, delta) {
+  if (!uid) return;
+  try {
+    const mine = await fs.query("referrals", "uid", "EQUAL", uid, 1);
+    if (mine && mine[0]) {
+      await fs.patch("referrals/" + mine[0].id, {
+        rewards: Math.max(0, Number(mine[0].rewards || 0) + delta),
+        updatedAt: Date.now(),
+      });
+    }
+  } catch (e) { /* best effort */ }
+}
+
+/**
+ * Close an unpaid order: stock, promo use and referral reward all go back.
+ * Used when Yoco can't be reached and when an unpaid checkout expires.
+ */
+async function releaseOrder(env, order, reason) {
+  if (!order || !order.id) return;
+  const fs = new Firestore(env);
+  const now = Date.now();
+  // Claim the order first so two releases can never both restore stock.
+  const fresh = await fs.get("orders/" + order.id);
+  if (!fresh || fresh.data.status !== "pending" || fresh.data.stockRestored) return;
+  const tx = await fs.begin();
+  const fields = {
+    status: "cancelled",
+    cancelledReason: reason,
+    stockRestored: true,
+    discountCounted: false,
+    referralRewardCounted: false,
+    updatedAt: now,
+  };
+  try {
+    await fs.commit(tx, [{
+      update: { name: fs.docRoot + "/orders/" + order.id, fields: mapFields(fields) },
+      updateMask: { fieldPaths: Object.keys(fields) },
+      currentDocument: { updateTime: fresh.updateTime },
+    }]);
+  } catch (e) {
+    return; // someone else changed it (paid / cancelled) — leave it alone
+  }
+  const cur = fresh.data;
+  await restoreStock(fs, cur);
+  if (cur.discountCounted && cur.discountCode) await bumpDiscount(fs, cur.discountCode, -1);
+  if (cur.referralRewardApplied && cur.referralRewardCounted && cur.uid) await bumpReward(fs, cur.uid, +1);
+  try { await fs.patch("orderStatus/" + cur.reference, { status: "cancelled", updatedAt: now }); } catch (e) { /* ignore */ }
+}
+
+/**
+ * Idempotently marks an order paid, then does the bookkeeping and emails.
+ *  - Already paid/fulfilled/shipped/delivered: nothing happens (no status regressions).
+ *  - Expired / auto-cancelled but Yoco took the money: the order is revived and
+ *    its stock re-taken; any shortfall is flagged for the admin.
+ *  - Cancelled by the admin but Yoco took the money: left cancelled, flagged and
+ *    the admin is alerted so they can refund or fulfil.
+ */
 async function settleOrderPaid(env, order, paymentId) {
   const fs = new Firestore(env);
   const id = order && order.id;
@@ -474,10 +594,28 @@ async function settleOrderPaid(env, order, paymentId) {
   const fresh = await fs.get("orders/" + id);
   if (!fresh) return { ok: false };
   const current = fresh.data;
-  if (current.status === "paid") return { ok: true };
-
-  const tx = await fs.begin();
+  if (isPaidLike(current.status)) return { ok: true, status: current.status };
   const now = Date.now();
+
+  if (current.status === "cancelled") {
+    const auto = current.cancelledReason === "expired" || current.cancelledReason === "payment-unavailable";
+    if (!auto) {
+      if (!current.paymentReceivedWhileCancelled) {
+        await fs.patch("orders/" + id, {
+          paymentReceivedWhileCancelled: true,
+          yocoPaymentId: paymentId || current.yocoPaymentId || null,
+          paidAt: now,
+          updatedAt: now,
+        });
+        await alertAdmin(env, "Payment received for cancelled order " + current.reference,
+          "Yoco took payment for order " + current.reference + " (" + money(current.total) +
+          ") after it was cancelled. Refund the customer or reopen and fulfil the order.");
+      }
+      return { ok: true, status: "cancelled", flagged: true };
+    }
+  }
+  const revive = current.status === "cancelled";
+
   const fields = {
     status: "paid",
     paymentMethod: "yoco",
@@ -486,29 +624,50 @@ async function settleOrderPaid(env, order, paymentId) {
     discountCounted: true,
     updatedAt: now,
   };
+  if (revive) {
+    fields.stockRestored = false;
+    fields.stockReserved = true;
+    fields.revivedAfterExpiry = true;
+    fields.cancelledReason = null;
+  }
   const writes = [{
     update: { name: fs.docRoot + "/orders/" + id, fields: mapFields(fields) },
     updateMask: { fieldPaths: Object.keys(fields).filter(function (k) { return fields[k] !== undefined; }) },
     currentDocument: { updateTime: fresh.updateTime },
   }];
+  try {
+    await fs.commit(await fs.begin(), writes);
+  } catch (e) {
+    // Lost a race with the webhook / confirm call: fine if the winner settled it.
+    const again = await fs.get("orders/" + id);
+    if (again && isPaidLike(again.data.status)) return { ok: true, status: again.data.status };
+    throw e;
+  }
+
+  // Only the request that won the commit above gets here, so bookkeeping runs once.
   if (current.discountCode && !current.discountCounted && (Number(current.discountAmount) || 0) > 0) {
-    const dd = await fs.get("discounts/" + String(current.discountCode).toUpperCase(), tx);
-    if (dd) {
-      writes.push({
-        update: { name: dd.name, fields: { usedCount: toFs(Number(dd.data.usedCount || 0) + 1) } },
-        updateMask: { fieldPaths: ["usedCount"] },
-        currentDocument: { updateTime: dd.updateTime },
-      });
+    await bumpDiscount(fs, current.discountCode, +1);
+  }
+  if (current.referralRewardApplied && !current.referralRewardCounted && current.uid) {
+    await bumpReward(fs, current.uid, -1);
+    try { await fs.patch("orders/" + id, { referralRewardCounted: true }); } catch (e) { /* ignore */ }
+  }
+  let shortfall = [];
+  if (revive) {
+    shortfall = await retakeStock(fs, current);
+    if (shortfall.length) {
+      try { await fs.patch("orders/" + id, { stockShortfall: shortfall }); } catch (e) { /* ignore */ }
     }
   }
-  await fs.commit(tx, writes);
-  await fs.patch("orderStatus/" + current.reference, {
-    status: "paid",
-    courier: current.courier || null,
-    trackingNumber: current.trackingNumber || null,
-    trackingUrl: current.trackingUrl || null,
-    updatedAt: now,
-  });
+  try {
+    await fs.patch("orderStatus/" + current.reference, {
+      status: "paid",
+      courier: current.courier || null,
+      trackingNumber: current.trackingNumber || null,
+      trackingUrl: current.trackingUrl || null,
+      updatedAt: now,
+    });
+  } catch (e) { /* ignore */ }
 
   // Referral bookkeeping — only ever for orders Yoco confirmed as paid.
   try {
@@ -536,28 +695,39 @@ async function settleOrderPaid(env, order, paymentId) {
       }
       await fs.patch("orders/" + id, { referralCounted: true });
     }
-    if (current.referralRewardApplied && !current.referralRewardCounted && current.uid) {
-      const mine = await fs.query("referrals", "uid", "EQUAL", current.uid, 1);
-      if (mine && mine[0]) {
-        await fs.patch("referrals/" + mine[0].id, {
-          rewards: Math.max(0, Number(mine[0].rewards || 0) - 1),
-          updatedAt: now,
-        });
-      }
-      await fs.patch("orders/" + id, { referralRewardCounted: true });
-    }
   } catch (e) { /* never block a confirmed payment */ }
 
+  const paidOrder = Object.assign({}, current, { status: "paid", paidAt: now });
   if (env.RESEND_API_KEY && current.customer && current.customer.email) {
     try {
       await sendEmail(env, {
         from: FROM_ORDERS, to: current.customer.email, replyTo: ORDERS_INBOX,
         subject: "Payment received — order " + current.reference,
-        html: statusHtml(current.customer.name, current.reference, "paid", current.total, current.courier, current.trackingNumber, current.trackingUrl),
+        html: receiptHtml(paidOrder),
       });
     } catch (e) { /* email is best-effort */ }
   }
-  return { ok: true };
+  await alertAdmin(env,
+    (revive ? "Late payment revived order " : "New paid order ") + current.reference,
+    (current.customer && current.customer.name ? current.customer.name : "A customer") + " · " + money(current.total) +
+      (shortfall.length ? " · STOCK SHORT: " + shortfall.join(", ") : ""),
+    paidOrder);
+  return { ok: true, status: "paid", revived: revive };
+}
+
+/** Push + email the shop owner. Best effort. */
+async function alertAdmin(env, title, body, order) {
+  try { await sendPush(env, title, body, "orders"); } catch (e) { /* ignore */ }
+  if (!env.RESEND_API_KEY) return;
+  try {
+    await sendEmail(env, {
+      from: FROM_ORDERS,
+      to: ORDERS_INBOX,
+      replyTo: order && order.customer && order.customer.email ? order.customer.email : ORDERS_INBOX,
+      subject: title,
+      html: order ? adminOrderHtml(order, body) : shell(`<h1 style="font-size:20px;margin:0 0 8px">${esc(title)}</h1><p style="color:#3b352f;line-height:1.6">${esc(body)}</p>`),
+    });
+  } catch (e) { /* ignore */ }
 }
 
 async function handleYocoWebhook(request, env) {
@@ -592,7 +762,7 @@ async function handleYocoWebhook(request, env) {
     // Yoco product) never triggers days of retries.
     if (!orderDoc) return json({ ok: true, ignored: true });
     const order = orderDoc.data;
-    if (order.status === "paid") return json({ ok: true });
+    if (isPaidLike(order.status)) return json({ ok: true });
     if (currency !== "ZAR") return json({ error: "Currency mismatch" }, 400);
     if (isFinite(amount) && amount > 0 && amount !== Math.round(Number(order.total) * 100)) {
       return json({ error: "Amount mismatch" }, 400);
@@ -660,7 +830,7 @@ function publicOrder(order) {
     trackingNumber: order.trackingNumber || null,
     trackingUrl: order.trackingUrl || null,
     deliveryMethod: order.deliveryMethod || "delivery",
-    paymentMethod: order.paymentMethod || "eft",
+    paymentMethod: order.paymentMethod || "yoco",
     items: (order.items || []).map(function (i) {
       return {
         productId: i.productId,
@@ -747,16 +917,17 @@ async function handleConfirmPayment(request, env) {
     }
     if (!doc) return json({ error: "Order not found." }, 404);
     const order = doc.data;
-    if (order.status === "paid") return json({ ok: true, status: "paid", order: publicOrder(order) });
-    if (order.status === "cancelled") return json({ ok: false, status: "cancelled" }, 200);
-    if (!order.yocoCheckoutId) return json({ ok: true, status: order.status }, 200);
+    // Never touch an order that is already paid or further along (no status regressions).
+    if (isPaidLike(order.status)) return json({ ok: true, status: order.status, order: publicOrder(order) });
+    if (!order.yocoCheckoutId) return json({ ok: order.status !== "cancelled", status: order.status }, 200);
     if (checkoutId && checkoutId !== order.yocoCheckoutId) {
       return json({ error: "Checkout does not match this order." }, 400);
     }
+    // Ask Yoco even when the order expired: a slow payer must not lose their money.
     const paid = await verifyYocoCheckout(env, order);
-    if (!paid) return json({ ok: true, status: order.status }, 200);
-    await settleOrderPaid(env, order, "");
-    return json({ ok: true, status: "paid" });
+    if (!paid) return json({ ok: order.status !== "cancelled", status: order.status }, 200);
+    const settled = await settleOrderPaid(env, order, "");
+    return json({ ok: settled.status !== "cancelled", status: settled.status || "paid" });
   } catch (e) {
     return json({ error: "Could not confirm the payment yet." }, 500);
   }
@@ -810,7 +981,7 @@ async function handleValidatePromo(request, env) {
     const discount = Object.assign({ code: code }, doc.data);
     const err = discountError(discount, lines, "online");
     if (err) return json({ error: err }, 400);
-    return json({ ok: true, discount: discount, amount: computeDiscount(discount, lines) });
+    return json({ ok: true, discount: publicDiscount(discount), amount: computeDiscount(discount, lines) });
   } catch (e) {
     return json({ error: "Could not check that code. Please try again." }, 500);
   }
@@ -985,9 +1156,10 @@ async function handlePlaceOrder(request, env) {
   const contact = body.contact || {};
   const delivery = body.delivery || {};
   const method = body.deliveryMethod === "collection" ? "collection" : "delivery";
-  const paymentMethod = body.paymentMethod === "yoco" ? "yoco" : "eft";
-  if (paymentMethod === "yoco" && !env.YOCO_SECRET_KEY) {
-    return json({ error: "Card payments are temporarily unavailable." }, 503);
+  // Card (Yoco) is the only payment method — EFT is no longer accepted.
+  const paymentMethod = "yoco";
+  if (!env.YOCO_SECRET_KEY) {
+    return json({ error: "Online payments are temporarily unavailable. Please try again shortly." }, 503);
   }
   const rawItems = Array.isArray(body.items) ? body.items : [];
   const name = String(contact.name || "").trim().slice(0, 120);
@@ -1054,61 +1226,45 @@ async function handlePlaceOrder(request, env) {
       referralCode: referral ? referral.code : "",
       referralOwnerUid: referral ? referral.ownerUid : null,
     });
+    // No "new order" push/email here: an unpaid card checkout is not an order
+    // yet. The admin is alerted (and the buyer emailed) once Yoco confirms payment.
     try {
-      await sendPush(
-        env,
-        "New order " + result.order.reference,
-        (result.order.customer && result.order.customer.name ? result.order.customer.name : "A customer") +
-          " · R" + result.order.total,
-        "orders",
-      );
-    } catch (e) { /* push is best-effort */ }
-
-    if (paymentMethod === "yoco") {
-      try {
-        const yoco = await startYocoCheckout(env, result.order);
-        await new Firestore(env).patch("orders/" + result.order.id, {
-          yocoCheckoutId: yoco.id,
-          paymentMethod: "yoco",
-          updatedAt: Date.now(),
-        });
-        result.order.yocoCheckoutId = yoco.id;
-        return json({ ok: true, order: result.order, redirectUrl: yoco.redirectUrl });
-      } catch (e) {
-        // A 400 from Yoco is a validation message we can safely show the buyer.
-        if (e && Number(e.yocoStatus) === 400) {
-          let msg = "";
-          try {
-            const parsed = JSON.parse(e.yocoBody || "{}");
-            msg = String(parsed.description || parsed.message || "").slice(0, 200);
-          } catch (err) { /* ignore */ }
-          if (msg) {
-            await cancelNewOrder(env, result.order);
-            return json({ error: msg }, 400);
-          }
-        }
-        // Record why Yoco failed so it can be diagnosed (never shown to buyers).
-        try {
-          await new Firestore(env).patch("serverSecrets/yocoLastError", {
-            at: Date.now(),
-            orderRef: result.order.reference,
-            total: Number(result.order.total) || 0,
-            status: Number(e && e.status) || 0,
-            yocoStatus: Number(e && e.yocoStatus) || 0,
-            detail: String((e && e.yocoBody) || (e && e.message) || e).slice(0, 500),
-          });
-        } catch (err) { /* best effort */ }
-        // Never leave a zombie order behind: release the stock and close it.
-        await cancelNewOrder(env, result.order);
-        return json({ error: "Card payments are temporarily unavailable. Please try again shortly, or contact us to pay by EFT." }, 502);
-      }
-    }
-    try {
-      await sendOrderEmails(env, result.order, result.settings);
+      const yoco = await startYocoCheckout(env, result.order);
+      await new Firestore(env).patch("orders/" + result.order.id, {
+        yocoCheckoutId: yoco.id,
+        paymentMethod: "yoco",
+        updatedAt: Date.now(),
+      });
+      result.order.yocoCheckoutId = yoco.id;
+      return json({ ok: true, order: result.order, redirectUrl: yoco.redirectUrl });
     } catch (e) {
-      // The order is saved; email is best-effort.
+      // A 400 from Yoco is a validation message we can safely show the buyer.
+      if (e && Number(e.yocoStatus) === 400) {
+        let msg = "";
+        try {
+          const parsed = JSON.parse(e.yocoBody || "{}");
+          msg = String(parsed.description || parsed.message || "").slice(0, 200);
+        } catch (err) { /* ignore */ }
+        if (msg) {
+          await cancelNewOrder(env, result.order);
+          return json({ error: msg }, 400);
+        }
+      }
+      // Record why Yoco failed so it can be diagnosed (never shown to buyers).
+      try {
+        await new Firestore(env).patch("serverSecrets/yocoLastError", {
+          at: Date.now(),
+          orderRef: result.order.reference,
+          total: Number(result.order.total) || 0,
+          status: Number(e && e.status) || 0,
+          yocoStatus: Number(e && e.yocoStatus) || 0,
+          detail: String((e && e.yocoBody) || (e && e.message) || e).slice(0, 500),
+        });
+      } catch (err) { /* best effort */ }
+      // Never leave a zombie order behind: release the stock and close it.
+      await cancelNewOrder(env, result.order);
+      return json({ error: "Card payments are temporarily unavailable. Please try again in a few minutes." }, 502);
     }
-    return json({ ok: true, order: result.order });
   } catch (e) {
     if (e && e.status) return json({ error: e.message }, e.status);
     return json({ error: "Sorry, we could not place your order. Please try again." }, 500);
@@ -1329,21 +1485,47 @@ class Firestore {
           : "Only " + stock + " of " + label + " left.");
       }
       if (!(unit > 0)) throw httpError(400, label + " is not available for online checkout right now.");
-      rows.push({ line: line, product: p, doc: doc, sizeKey: sizeKey, size: chosen, unitPrice: unit });
+      rows.push({ line: line, product: p, doc: doc, sizeKey: sizeKey, size: chosen, unitPrice: unit, stock: stock, label: label });
+    }
+
+    // The same product/size can appear on several cart lines: check the TOTAL
+    // asked for against stock, not each line on its own (that let 2+2 of a
+    // product with 2 left through, and the stock silently clamped to 0).
+    const wanted = new Map();
+    for (const r of rows) {
+      const key = r.line.productId + "|" + (r.sizeKey || "");
+      const w = wanted.get(key) || { qty: 0, stock: r.stock, label: r.label };
+      w.qty += r.line.qty;
+      wanted.set(key, w);
+    }
+    for (const w of wanted.values()) {
+      if (w.stock != null && w.qty > w.stock) {
+        throw httpError(400, w.stock <= 0 ? w.label + " is sold out." : "Only " + w.stock + " of " + w.label + " left.");
+      }
     }
 
     // Referral reward: a free 30 ml of the cheapest fragrance in the basket.
-    // Applied here so packing is obvious; the reward is only consumed on payment.
+    // The reward is claimed inside this transaction (and handed back if the
+    // checkout expires), so one reward can never cover several orders.
     let giftApplied = false;
+    let rewardWrite = null;
     if (input.uid) {
       try {
         const mine = await this.query("referrals", "uid", "EQUAL", input.uid, 1);
-        const refDoc = mine && mine[0];
-        if (refDoc && Number(refDoc.rewards || 0) > 0) {
+        const refRow = mine && mine[0];
+        const refDoc = refRow ? await this.get("referrals/" + refRow.id, tx) : null;
+        if (refDoc && Number(refDoc.data.rewards || 0) > 0) {
           const ordered = rows.slice().sort(function (a, b) { return a.unitPrice - b.unitPrice; });
           for (const cand of ordered) {
             const thirty = cand.product.sizes && cand.product.sizes.size30;
             if (!thirty || thirty.inStock === false || !(Number(thirty.price) > 0)) continue;
+            const taken = (wanted.get(cand.line.productId + "|size30") || { qty: 0 }).qty;
+            if (thirty.stockQty != null && Number(thirty.stockQty) - taken < 1) continue;
+            rewardWrite = {
+              update: { name: refDoc.name, fields: { rewards: toFs(Number(refDoc.data.rewards) - 1), updatedAt: toFs(Date.now()) } },
+              updateMask: { fieldPaths: ["rewards", "updatedAt"] },
+              currentDocument: { updateTime: refDoc.updateTime },
+            };
             rows.push({
               line: { productId: cand.line.productId, sizeKey: "size30", qty: 1 },
               product: cand.product,
@@ -1378,6 +1560,14 @@ class Firestore {
       if (err) throw httpError(400, err);
       discountAmount = computeDiscount(discount, lines);
     }
+    // Count the promo use now (in this transaction) rather than on payment, so a
+    // single-use code can't be spent on several checkouts opened at once.
+    // It is handed back if the checkout expires or Yoco can't be reached.
+    const discountWrite = discountAmount > 0 && discountDoc ? {
+      update: { name: discountDoc.name, fields: { usedCount: toFs(Number(discountDoc.data.usedCount || 0) + 1) } },
+      updateMask: { fieldPaths: ["usedCount"] },
+      currentDocument: { updateTime: discountDoc.updateTime },
+    } : null;
 
     const total = round2(Math.max(0, subtotal + fee - discountAmount));
     if (!(total > 0)) throw httpError(400, "The order total must be greater than zero.");
@@ -1404,7 +1594,7 @@ class Firestore {
       delivery: cleanAddress(input.delivery),
       deliveryMethod: input.method,
       deliveryFee: fee,
-      paymentMethod: input.paymentMethod || "eft",
+      paymentMethod: "yoco",
       subtotal: subtotal,
       discountCode: discountAmount > 0 ? input.code : undefined,
       discountAmount: discountAmount > 0 ? discountAmount : undefined,
@@ -1425,10 +1615,14 @@ class Firestore {
       referralCode: input.referralCode || undefined,
       referralOwnerUid: input.referralOwnerUid || undefined,
       referralRewardApplied: giftApplied || undefined,
+      // Claimed in this transaction (see rewardWrite) — not again on payment.
+      referralRewardCounted: giftApplied ? true : undefined,
       referralCounted: false,
       stockReserved: true,
       stockRestored: false,
-      discountCounted: false,
+      // Promo use is counted now (see discountWrite) — the admin app checks this
+      // flag so it never counts the same order twice.
+      discountCounted: !!discountWrite,
       createdAt: now,
       updatedAt: now,
       serverCreatedAt: new Date(),
@@ -1494,6 +1688,8 @@ class Firestore {
       },
       currentDocument: { exists: false },
     });
+    if (discountWrite) writes.push(discountWrite);
+    if (rewardWrite && giftApplied) writes.push(rewardWrite);
     await this.commit(tx, writes);
     return { order: order, settings: cfg };
   }
@@ -1545,44 +1741,27 @@ async function expireUnpaidOrders(env) {
   for (const order of pending) {
     if (order.channel !== "online" || !order.stockReserved || order.stockRestored) continue;
     if (Number(order.createdAt || 0) > cutoff) continue;
-
-    for (const item of order.items || []) {
-      try {
-        const doc = await fs.get("products/" + item.productId);
-        if (!doc) continue;
-        if (item.sizeKey && doc.data.sizes && doc.data.sizes[item.sizeKey]) {
-          const sizes = JSON.parse(JSON.stringify(doc.data.sizes));
-          const size = sizes[item.sizeKey];
-          if (size.stockQty != null) size.stockQty = Number(size.stockQty) + Number(item.qty);
-          size.inStock = true;
-          await fs.patch("products/" + item.productId, { sizes: sizes });
-        } else if (doc.data.stockQty != null) {
-          await fs.patch("products/" + item.productId, {
-            stockQty: Number(doc.data.stockQty) + Number(item.qty),
-            inStock: true,
-          });
-        }
-      } catch (e) { /* keep going */ }
-    }
+    // Legacy EFT orders (placed before card-only checkout) may already be paid
+    // by bank transfer — never auto-cancel them; the admin settles those by hand.
+    if (order.paymentMethod !== "yoco") continue;
     try {
-      await fs.patch("orders/" + order.id, {
-        status: "cancelled",
-        cancelledReason: "expired",
-        stockRestored: true,
-        updatedAt: Date.now(),
-      });
-      await fs.patch("orderStatus/" + order.reference, {
-        status: "cancelled",
-        updatedAt: Date.now(),
-      });
-    } catch (e) { /* keep going */ }
+      // The customer may have paid just before the cutoff and the webhook is
+      // late: ask Yoco first, and settle instead of cancelling if so.
+      if (order.yocoCheckoutId && await verifyYocoCheckout(env, order)) {
+        await settleOrderPaid(env, order, "");
+        continue;
+      }
+      await releaseOrder(env, order, "expired");
+    } catch (e) { /* keep going with the next order */ }
   }
 }
 
 function refCode(length) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const buf = new Uint8Array(length);
+  crypto.getRandomValues(buf);
   let out = "";
-  for (let i = 0; i < length; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < length; i++) out += chars[buf[i] % chars.length];
   return out;
 }
 
@@ -1717,44 +1896,6 @@ function fromFsValue(v) {
   return null;
 }
 
-function orderForEmail(order) {
-  return {
-    reference: order.reference,
-    total: order.total,
-    items: order.items,
-    delivery: addressLine(order.delivery),
-  };
-}
-
-function bankDetails(settings) {
-  return {
-    accountName: settings.bankAccountName || "Kauā Fragrances",
-    bank: settings.bankName || "",
-    accountNumber: settings.bankAccountNumber || "",
-    branchCode: settings.bankBranchCode || "",
-    accountType: settings.bankAccountType || "",
-  };
-}
-
-async function sendOrderEmails(env, order, settings) {
-  if (!env.RESEND_API_KEY) return;
-  const emailOrder = orderForEmail(order);
-  await sendEmail(env, {
-    from: FROM_ORDERS,
-    to: order.customer.email,
-    replyTo: ORDERS_INBOX,
-    subject: "Order " + order.reference + " received — Kauā Fragrances",
-    html: orderHtml(order.customer.name, emailOrder, true, order.customer.email, order.customer.phone, bankDetails(settings || {})),
-  });
-  await sendEmail(env, {
-    from: FROM_ORDERS,
-    to: ORDERS_INBOX,
-    replyTo: order.customer.email,
-    subject: "New order " + order.reference + " — " + money(order.total),
-    html: orderHtml(order.customer.name, emailOrder, false, order.customer.email, order.customer.phone),
-  });
-}
-
 async function sendEmail(env, { from, to, subject, html, replyTo }) {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -1799,22 +1940,6 @@ function shell(inner) {
   </div>`;
 }
 
-function bankingBlock(b, reference, total) {
-  if (!b || !b.accountNumber || String(b.accountNumber).startsWith('PASTE')) return '';
-  const row = (k, v) => `<tr><td style="padding:6px 0;color:#7d766c;font-size:13px">${k}</td><td style="padding:6px 0;text-align:right;font-weight:600;font-size:13px">${esc(v)}</td></tr>`;
-  return `<div style="background:#f7f5f1;border-radius:12px;padding:18px 20px;margin:16px 0">
-    <div style="font-weight:800;text-transform:uppercase;letter-spacing:0.05em;font-size:13px;margin-bottom:8px">Pay by EFT — ${money(total)}</div>
-    <table style="width:100%;border-collapse:collapse">
-      ${row('Account name', b.accountName || 'Kauā Fragrances')}
-      ${b.bank ? row('Bank', b.bank) : ''}
-      ${row('Account no.', b.accountNumber)}
-      ${b.branchCode ? row('Branch code', b.branchCode) : ''}
-      ${b.accountType ? row('Account type', b.accountType) : ''}
-      ${row('Reference', reference)}
-    </table>
-  </div>`;
-}
-
 function restockHtml(product) {
   return shell(`
     <h1 style="font-size:22px;margin:0 0 10px">It's back 🖤</h1>
@@ -1829,7 +1954,7 @@ function statusHtml(name, reference, status, total, courier, trackingNumber, tra
         <div style="font-weight:800;text-transform:uppercase;letter-spacing:0.05em;font-size:11px;color:#7d766c;margin-bottom:6px">Delivery</div>
         ${courier ? `<div><strong>Courier:</strong> ${esc(courier)}</div>` : ''}
         ${trackingNumber ? `<div><strong>Tracking:</strong> ${esc(trackingNumber)}</div>` : ''}
-        ${trackingUrl ? `<div style="margin-top:6px"><a href="${esc(trackingUrl)}" style="color:#7a4a2b;font-weight:700">Track your parcel &rarr;</a></div>` : ''}
+        ${safeUrl(trackingUrl) ? `<div style="margin-top:6px"><a href="${esc(safeUrl(trackingUrl))}" style="color:#7a4a2b;font-weight:700">Track your parcel &rarr;</a></div>` : ''}
       </div>` : '';
   if (status === 'paid') {
     return shell(`
@@ -1872,35 +1997,63 @@ function welcomeHtml(name) {
     <p style="margin-top:20px">${BTN(SITE_URL, 'Browse fragrances')}</p>`);
 }
 
-function orderHtml(name, order, forCustomer, customerEmail, phone, banking) {
-  const rows = order.items.map((i) =>
-    `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;font-size:14px">${i.qty} × ${esc(i.name)}${i.size ? ` <span style="color:#7d766c">(${esc(i.size)})</span>` : ''}</td>
-     <td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;font-size:14px">${money(i.price * i.qty)}</td></tr>`).join('');
-  const itemsTable = `<table style="width:100%;border-collapse:collapse;margin:14px 0">${rows}
-    <tr><td style="padding:12px 0;font-weight:800">Total</td><td style="padding:12px 0;text-align:right;font-weight:800">${money(order.total)}</td></tr></table>`;
+function itemsTableHtml(order) {
+  const rows = (order.items || []).map((i) =>
+    `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;font-size:14px">${Number(i.qty) || 0} × ${esc(i.name)}${i.size ? ` <span style="color:#7d766c">(${esc(i.size)})</span>` : ''}${i.isGift ? ' <span style="color:#7d766c">— gift</span>' : ''}</td>
+     <td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;font-size:14px">${i.isGift ? 'Free' : money(i.price * i.qty)}</td></tr>`).join('');
+  const line = (k, v) => `<tr><td style="padding:4px 0;color:#7d766c;font-size:13px">${k}</td><td style="padding:4px 0;text-align:right;font-size:13px">${v}</td></tr>`;
+  return `<table style="width:100%;border-collapse:collapse;margin:14px 0">${rows}
+    ${order.subtotal != null ? line('Subtotal', money(order.subtotal)) : ''}
+    ${order.discountAmount ? line('Discount' + (order.discountCode ? ' (' + esc(order.discountCode) + ')' : ''), '−' + money(order.discountAmount)) : ''}
+    ${line(order.deliveryMethod === 'collection' ? 'Collection' : 'Delivery', (Number(order.deliveryFee) || 0) === 0 ? 'Free' : money(order.deliveryFee))}
+    <tr><td style="padding:12px 0;font-weight:800">Total paid</td><td style="padding:12px 0;text-align:right;font-weight:800">${money(order.total)}</td></tr></table>`;
+}
 
-  if (forCustomer) {
-    return shell(`
-      <h1 style="font-size:23px;margin:0 0 6px">Thank you, ${esc(name)} 🖤</h1>
-      <p style="line-height:1.6;color:#3b352f;margin:0 0 16px">We've received your order. Here's your payment reference:</p>
-      <div style="text-align:center;border:2px dashed #141210;border-radius:12px;padding:16px;margin:0 0 16px">
-        <div style="font-size:26px;font-weight:800;letter-spacing:3px">${esc(order.reference)}</div>
-        <div style="font-size:12px;color:#7d766c;margin-top:4px">Use this reference on your EFT so we can match your payment.</div>
-      </div>
-      ${itemsTable}
-      ${order.delivery ? `<p style="color:#3b352f;font-size:14px;margin:0 0 4px"><strong>Deliver to:</strong> ${esc(order.delivery)}</p>` : ''}
-      ${bankingBlock(banking, order.reference, order.total)}
-      <p style="line-height:1.6;color:#3b352f">Once we confirm your payment we'll get it mixed, packed and on its way — you'll get an email at each step. Questions? Just reply to this email.</p>`);
-  }
+/** Customer receipt, sent once Yoco has confirmed the card payment. */
+function receiptHtml(order) {
+  const name = order.customer && order.customer.name ? order.customer.name : 'there';
+  const dest = order.deliveryMethod === 'collection' ? 'Collection' : addressLine(order.delivery || {});
   return shell(`
-    <h1 style="font-size:20px;margin:0 0 8px">New order ${esc(order.reference)}</h1>
-    <p style="color:#3b352f"><strong>${esc(name)}</strong> — ${esc(customerEmail || '')}${phone ? ` · ${esc(String(phone))}` : ''}</p>
-    ${itemsTable}
-    ${order.delivery ? `<p style="color:#7d766c;font-size:14px"><strong>Deliver to:</strong> ${esc(order.delivery)}</p>` : ''}
-    <p style="color:#7d766c;font-size:13px">Awaiting EFT with reference ${esc(order.reference)}.</p>`);
+    <h1 style="font-size:23px;margin:0 0 6px">Payment received ✓</h1>
+    <p style="line-height:1.6;color:#3b352f;margin:0 0 16px">Thank you, ${esc(name)} — your card payment went through and your order is confirmed.</p>
+    <div style="text-align:center;border:2px dashed #141210;border-radius:12px;padding:14px;margin:0 0 6px">
+      <div style="font-size:12px;color:#7d766c;text-transform:uppercase;letter-spacing:0.08em">Order reference</div>
+      <div style="font-size:26px;font-weight:800;letter-spacing:3px;margin-top:4px">${esc(order.reference)}</div>
+    </div>
+    ${itemsTableHtml(order)}
+    ${dest ? `<p style="color:#3b352f;font-size:14px;margin:0 0 4px"><strong>${order.deliveryMethod === 'collection' ? 'Collection' : 'Deliver to'}:</strong> ${esc(dest)}</p>` : ''}
+    <p style="line-height:1.6;color:#3b352f">We'll get it mixed, packed and on its way — you'll get an email at each step. Questions? Just reply to this email.</p>
+    <p style="margin-top:18px">${BTN(SITE_URL + '/track', 'Track order')}</p>`);
+}
+
+/** Order notification for the shop inbox. */
+function adminOrderHtml(order, headline) {
+  const c = order.customer || {};
+  const dest = order.deliveryMethod === 'collection' ? 'Collection' : addressLine(order.delivery || {});
+  return shell(`
+    <h1 style="font-size:20px;margin:0 0 8px">Order ${esc(order.reference)}</h1>
+    ${headline ? `<p style="color:#3b352f;margin:0 0 10px">${esc(headline)}</p>` : ''}
+    <p style="color:#3b352f"><strong>${esc(c.name || '')}</strong> — ${esc(c.email || '')}${c.phone ? ` · ${esc(String(c.phone))}` : ''}</p>
+    ${itemsTableHtml(order)}
+    ${dest ? `<p style="color:#7d766c;font-size:14px"><strong>${order.deliveryMethod === 'collection' ? 'Collection' : 'Deliver to'}:</strong> ${esc(dest)}</p>` : ''}
+    ${c.note ? `<p style="color:#7d766c;font-size:14px"><strong>Note:</strong> ${esc(c.note)}</p>` : ''}
+    <p style="color:#7d766c;font-size:13px">Paid by card (Yoco).</p>`);
 }
 
 // ---------- helpers ----------
+/** Only what the checkout needs to show and re-check a code — no usage counts or limits. */
+function publicDiscount(d) {
+  const out = {};
+  for (const k of ['code', 'active', 'type', 'value', 'mechanic', 'scope', 'minSpend', 'expiresAt',
+    'bundleQty', 'bundleReward', 'bundleValue', 'bundleFree']) {
+    if (d[k] !== undefined) out[k] = d[k];
+  }
+  return out;
+}
+function safeUrl(u) {
+  const s = String(u || '').trim();
+  return /^https?:///i.test(s) ? s : '';
+}
 function addressLine(d) {
   return [d.line1, d.line2, d.city, d.province, d.postalCode, d.country].filter(Boolean).join(', ');
 }

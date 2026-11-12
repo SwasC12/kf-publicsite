@@ -18,7 +18,7 @@ export class ConfirmationComponent {
   readonly orders = inject(OrdersService);
   private cart = inject(CartService);
   private settings = inject(SettingsService);
-  get bank() { return this.settings.bankingDetails(); }
+  get contactEmail(): string { return this.settings.settings().contactEmail || 'hello@kauafragrances.co.za'; }
   readonly copied = signal(false);
   readonly paid = signal(false);
   readonly checking = signal(false);

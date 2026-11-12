@@ -8,7 +8,7 @@ import { ReferralService } from '@core/services/referral.service';
 import { EmailService } from '@core/services/email.service';
 import { IconComponent } from '@shared/components/icon/icon.component';
 import { Address, emptyAddress } from '@core/models';
-import { formatPrice } from '@core/utils';
+import { SA_PROVINCES, formatPrice } from '@core/utils';
 
 @Component({
   selector: 'app-account',
@@ -38,6 +38,7 @@ export class AccountComponent {
   readonly verifySent = signal(false);
   readonly refCopied = signal(false);
 
+  readonly provinces: string[] = SA_PROVINCES;
   price = formatPrice;
 
   constructor() {

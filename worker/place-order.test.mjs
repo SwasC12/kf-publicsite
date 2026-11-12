@@ -38,6 +38,14 @@ const discount = {
 
 let calls = [];
 let lastCommit = null;
+let patches = [];
+let yocoStatus = 'completed';
+const S = (v) => ({ stringValue: v });
+const orderDocs = {
+  ord_shipped: { id: S('ord_shipped'), reference: S('KF-SHIPD'), status: S('shipped'), total: { integerValue: '200' }, yocoCheckoutId: S('ch_1'), paymentMethod: S('yoco') },
+  ord_expired: { id: S('ord_expired'), reference: S('KF-EXPRD'), status: S('cancelled'), cancelledReason: S('expired'), total: { integerValue: '200' }, yocoCheckoutId: S('ch_1'), paymentMethod: S('yoco'), customer: { mapValue: { fields: { name: S('Late Payer'), email: S('late@example.com') } } } },
+  ord_admincx: { id: S('ord_admincx'), reference: S('KF-ADMCX'), status: S('cancelled'), cancelledReason: S('customer request'), total: { integerValue: '200' }, yocoCheckoutId: S('ch_1'), paymentMethod: S('yoco') },
+};
 globalThis.fetch = async function (input, opts) {
   const url = String(input);
   calls.push({ url, opts });
@@ -50,6 +58,12 @@ globalThis.fetch = async function (input, opts) {
   if (url.includes('/discounts/SAVE10')) return json({ name: 'discounts/SAVE10', updateTime: 't1', fields: discount });
   if (url.includes('/discounts/')) return json({ error: { code: 404, message: 'not found', status: 'NOT_FOUND' } }, 404);
   if (url.includes('/orderStatus/')) return json({ error: { code: 404, message: 'not found', status: 'NOT_FOUND' } }, 404);
+  if (url.includes('payments.yoco.com/api/checkouts/')) return json({ id: 'ch_1', status: yocoStatus });
+  if (url.includes('payments.yoco.com/api/checkouts')) return json({ id: 'ch_1', redirectUrl: 'https://pay.yoco.com/c/ch_1' });
+  if (opts && opts.method === 'PATCH') { patches.push({ url, body: JSON.parse(opts.body) }); return json({}); }
+  if (url.includes(':runQuery')) return json([]);
+  const od = url.match(/\/orders\/(ord_[a-z]+)/);
+  if (od && orderDocs[od[1]]) return json({ name: 'orders/' + od[1], updateTime: 't1', fields: orderDocs[od[1]] });
   if (url.endsWith(':beginTransaction')) return json({ transaction: 'tx1' });
   if (url.endsWith(':commit')) {
     lastCommit = JSON.parse(opts.body);
@@ -70,6 +84,7 @@ const env = {
   ADMIN_API_KEY: 'admin-secret',
   ADMIN_UID: 'uid1',
   FIREBASE_API_KEY: 'web-key',
+  YOCO_SECRET_KEY: 'sk_test_x',
 };
 
 function request(path, body, headers = {}) {
@@ -102,9 +117,11 @@ check('server recomputes total 240', data.order && data.order.total === 240, dat
 check('server recomputes item price 100', data.order && data.order.items[0].price === 100);
 check('reference format', data.order && /^KF-[A-Z2-9]{5}$/.test(data.order.reference), data.order && data.order.reference);
 check('stock write 5-2=3', !!lastCommit && lastCommit.writes.some((w) => w.update && w.update.fields && w.update.fields.stockQty && w.update.fields.stockQty.integerValue === '3'));
-check('discount deferred until paid', !!lastCommit && !lastCommit.writes.some((w) => w.update && w.update.fields && w.update.fields.usedCount));
+check('promo use reserved at placement', !!lastCommit && lastCommit.writes.some((w) => w.update && w.update.fields && w.update.fields.usedCount && w.update.fields.usedCount.integerValue === '1'));
+check('card checkout redirect returned', data.redirectUrl === 'https://pay.yoco.com/c/ch_1', data.redirectUrl);
+check('order is card (yoco)', data.order && data.order.paymentMethod === 'yoco');
 check('stock reserved on order', data.order && data.order.stockReserved === true);
-check('two emails sent', calls.filter((c) => c.url.includes('api.resend.com')).length === 2);
+check('no emails before payment', calls.filter((c) => c.url.includes('api.resend.com')).length === 0);
 check('writes omit HTTP prefix', !!lastCommit && lastCommit.writes.filter((w) => w.update && w.update.name).every((w) => !w.update.name.startsWith('http')));
 
 // 1b. A sized product prices and decrements the selected size.
@@ -180,6 +197,43 @@ check('admin status email allowed', res.status === 200, await res.clone().json()
 const badAuth = { Authorization: ['Bearer', 'bad-token'].join(' ') };
 res = await worker.fetch(request('/api/send-email', { type: 'restock', to: 'buyer@example.com', productName: 'Olympea' }, badAuth), env);
 check('restock rejects non-admin token', res.status === 403, await res.clone().json());
+
+// 8. Splitting one product across lines can't beat the stock check (p2 has 1 left).
+res = await worker.fetch(request('/api/place-order', {
+  contact: { name: 'Test Buyer', email: 'split@example.com', phone: '0821234567' },
+  delivery: { line1: '1 Main St', city: 'Cape Town' },
+  deliveryMethod: 'delivery', paymentMethod: 'eft',
+  items: [{ productId: 'p2', qty: 1 }, { productId: 'p2', qty: 1 }],
+}), env);
+data = await res.json();
+check('split lines rejected 400', res.status === 400 && /Only 1/.test(data.error || ''), data);
+
+// 9. The promo check no longer leaks usage counters.
+res = await worker.fetch(request('/api/validate-promo', { code: 'save10', items: [{ productId: 'p1', qty: 1 }] }), env);
+data = await res.json();
+check('promo response hides usedCount', res.status === 200 && data.discount && !('usedCount' in data.discount), data.discount);
+
+// 10. confirm-payment can't drag a shipped order back to "paid".
+calls = []; lastCommit = null; patches = [];
+res = await worker.fetch(request('/api/confirm-payment', { orderId: 'ord_shipped' }), env);
+data = await res.json();
+check('shipped order stays shipped', data.status === 'shipped' && !lastCommit, data);
+check('no payment email for shipped order', calls.filter((c) => c.url.includes('api.resend.com')).length === 0);
+
+// 11. A late payment on an expired checkout revives the order.
+calls = []; lastCommit = null; patches = [];
+res = await worker.fetch(request('/api/confirm-payment', { orderId: 'ord_expired' }), env);
+data = await res.json();
+const revive = lastCommit && lastCommit.writes[0].update.fields;
+check('expired + paid -> paid', data.status === 'paid' && revive && revive.status.stringValue === 'paid', data);
+check('revived order flagged', !!revive && revive.revivedAfterExpiry && revive.revivedAfterExpiry.booleanValue === true);
+
+// 12. Payment on an order the admin cancelled is flagged, not revived.
+calls = []; lastCommit = null; patches = [];
+res = await worker.fetch(request('/api/confirm-payment', { orderId: 'ord_admincx' }), env);
+data = await res.json();
+check('admin-cancelled stays cancelled', data.status === 'cancelled' && !lastCommit, data);
+check('admin-cancelled payment flagged', patches.some((x) => x.url.includes('/orders/ord_admincx') && x.body.fields.paymentReceivedWhileCancelled), patches.map((x) => x.url));
 
 console.log(failures === 0 ? 'ALL TESTS PASSED' : failures + ' TEST(S) FAILED');
 process.exit(failures === 0 ? 0 : 1);

@@ -11,6 +11,11 @@
     // Let the Worker add security headers / serve the SPA on every request.
     "run_worker_first": true
   },
-  // Release stock from abandoned unpaid orders every 10 minutes.
-  "triggers": { "crons": ["*/10 * * * *"] }
+  // Release stock from abandoned unpaid card checkouts every 10 minutes.
+  "triggers": { "crons": ["*/10 * * * *"] },
+  // Edge rate limit for /api/* — shared by every Worker instance (per path + IP).
+  // Used by edgeLimit() in worker/index.js; the Worker fails open if it's missing.
+  "ratelimits": [
+    { "name": "API_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
+  ]
 }

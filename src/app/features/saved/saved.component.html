@@ -1,40 +1,45 @@
 
     <h1 class="page-title">Saved fragrances</h1>
     @if (fav.items().length === 0) {
-      <div class="notice">
-        <app-icon name="heart" [size]="40" />
-        <p>You haven't saved anything yet. Tap the heart on a fragrance to save it here.</p>
+      <div class="empty-state">
+        <app-icon name="heart" [size]="36" />
+        <h2 class="empty-title">Nothing saved yet</h2>
+        <p>Tap the heart on any fragrance to keep it here for later.</p>
         <a class="btn primary" routerLink="/">Browse fragrances</a>
       </div>
     } @else {
       <div class="grid">
         @for (p of fav.items(); track p.id) {
-          <article class="card">
-            <button class="fav-btn on" (click)="fav.toggle(p.id)" aria-label="Remove from saved">
+          <article class="card" [class.sold-out]="!anyAvailable(p)">
+            <button type="button" class="fav-btn on" (click)="fav.toggle(p.id)" [attr.aria-label]="'Remove ' + p.name + ' from saved'">
               <app-icon name="heart" [size]="18" [filled]="true" />
             </button>
-            <a class="thumb" [routerLink]="['/product', p.id]">
-              <img [src]="img(p)" [alt]="p.name" loading="lazy" (error)="imgErr($event)" />
-              @if (anySale(p)) { <span class="sale-badge">Sale</span> }
-              @if (!anyAvailable(p)) { <span class="oos-badge">Sold out</span> }
+            <a class="thumb" [routerLink]="['/product', p.id]" tabindex="-1" aria-hidden="true">
+              <img [src]="img(p)" alt="" loading="lazy" decoding="async" (error)="imgErr($event)" />
+              <span class="badges">
+                @if (!anyAvailable(p)) { <span class="badge-tag dark">Sold out</span> }
+                @else if (anySale(p)) { <span class="badge-tag gold">Sale</span> }
+              </span>
             </a>
             <div class="card-body">
-              <a class="p-name" [routerLink]="['/product', p.id]">{{ p.name }}</a>
               @if (p.inspiredBy) { <span class="p-inspired">Smells like {{ p.inspiredBy }}</span> }
+              <a class="p-name" [routerLink]="['/product', p.id]">{{ p.name }}</a>
               <div class="p-foot">
                 <span class="p-price">
-                  @if (cardWas(p); as was) { <span class="was">{{ price(was) }}</span> }
-                  {{ hasSizes(p) ? 'From ' : '' }}{{ price(cardPrice(p)) }}
+                  @if (hasSizes(p)) { <span class="from">From</span> }
+                  @if (cardWas(p); as was) { <span class="was"><span class="sr-only">Was </span>{{ price(was) }}</span> }
+                  <span class="now">{{ price(cardPrice(p)) }}</span>
                 </span>
-                @if (hasSizes(p)) {
+                @if (!anyAvailable(p)) {
+                  <a class="add-btn ghost" [routerLink]="['/product', p.id]">Notify me</a>
+                } @else if (hasSizes(p)) {
                   <a class="add-btn" [routerLink]="['/product', p.id]">Choose size</a>
-                } @else if (p.inStock && (p.stockQty == null || p.stockQty > 0)) {
-                  <button class="add-btn" (click)="cart.add(p)"><app-icon name="plus" [size]="16" /> Add</button>
-                } @else { <button class="add-btn disabled" disabled>Sold out</button> }
+                } @else {
+                  <button type="button" class="add-btn" (click)="cart.add(p)" [attr.aria-label]="'Add ' + p.name + ' to cart'"><app-icon name="plus" [size]="14" /> Add</button>
+                }
               </div>
             </div>
           </article>
         }
       </div>
     }
-  

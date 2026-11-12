@@ -1,8 +1,8 @@
 # Kauā Fragrances — storefront
 
 Public shop for **Kauā Fragrances** (www.kauafragrances.co.za). Customers browse
-fragrances, add to cart, and check out — payment is by **EFT** using an order
-reference (no card gateway). Orders and the product catalogue live in the same
+fragrances, add to cart, and check out — payment is by **card through Yoco**
+(EFT is no longer accepted). Orders and the product catalogue live in the same
 Firebase project as the **Oil Tracker** admin app, so managing stock/prices and
 seeing orders all happens from there.
 
@@ -70,8 +70,8 @@ from the hosted site.
 
 ## Fill these in before going live
 
-- **`src/app/banking.config.ts`** — your real EFT/banking details (shown to
-  customers on the confirmation page) and contact email/phone.
+- **Worker secrets** — `YOCO_SECRET_KEY`, `YOCO_WEBHOOK_SECRET`, `FIREBASE_SERVICE_ACCOUNT`,
+  `RESEND_API_KEY` (Cloudflare → Workers & Pages → kf-publicsite → Settings → Variables and Secrets).
 
 ## Shared Firebase setup (do once, for BOTH apps)
 
