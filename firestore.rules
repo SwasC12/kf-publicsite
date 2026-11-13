@@ -107,6 +107,12 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // Customer display: the till mirrors its cart to posDisplay/current and a
+    // second device signed in as the admin shows it to the customer.
+    match /posDisplay/{id} {
+      allow read, write: if isAdmin();
+    }
+
     // Business expenses (Budgeting tab) — admin only, never public.
     match /expenses/{id} {
       allow read, write: if isAdmin();
