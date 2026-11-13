@@ -152,9 +152,30 @@ async function adminAuthorized(request, env) {
  * mode, so the browser cannot upload by itself. Admin Firebase token only.
  * Worker secrets: CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.
  */
+/**
+ * Cloudinary credentials from the Worker secrets, forgiving the usual paste
+ * mistakes: stray spaces/newlines, or the whole "API environment variable"
+ * (cloudinary://KEY:SECRET@CLOUD) pasted into either secret.
+ */
+function cloudinaryCreds(env) {
+  const clean = function (v) { return String(v || "").replace(/\s+/g, ""); };
+  let key = clean(env.CLOUDINARY_API_KEY);
+  let secret = clean(env.CLOUDINARY_API_SECRET);
+  let cloud = clean(env.CLOUDINARY_CLOUD_NAME);
+  const url = [env.CLOUDINARY_URL, env.CLOUDINARY_API_KEY, env.CLOUDINARY_API_SECRET].map(clean).find(function (v) { return /^cloudinary:\/\//i.test(v); });
+  const m = url && /^cloudinary:\/\/([^:]+):([^@]+)@(.+)$/i.exec(url);
+  if (m) { key = m[1]; secret = m[2]; cloud = cloud || m[3]; }
+  return { key: key, secret: secret, cloud: cloud };
+}
+
 async function handleCloudinarySign(request, env) {
-  if (!env.CLOUDINARY_API_KEY || !env.CLOUDINARY_API_SECRET) return json({ error: "Uploads not configured" }, 503);
+  const creds = cloudinaryCreds(env);
+  if (!creds.key || !creds.secret) return json({ error: "Uploads not configured" }, 503);
   if (!(await adminAuthorized(request, env))) return json({ error: "Forbidden" }, 403);
+  // A Cloudinary API key is all digits. Anything else means the secrets are mixed up.
+  if (!/^\d{6,20}$/.test(creds.key)) {
+    return json({ error: "The CLOUDINARY_API_KEY secret doesn't look like an API key (it should be only digits). Check it isn't the API secret." }, 500);
+  }
   let body;
   try { body = await request.json(); } catch (e) { body = {}; }
   const folder = String(body.folder || "kaua/products");
@@ -163,10 +184,26 @@ async function handleCloudinarySign(request, env) {
   if (!/^[a-z0-9_-]{1,64}$/i.test(preset)) return json({ error: "Bad preset" }, 400);
   const timestamp = Math.floor(Date.now() / 1000);
   // Cloudinary: SHA-1 of the alphabetically sorted params, then the API secret.
-  const toSign = "folder=" + folder + "&timestamp=" + timestamp + "&upload_preset=" + preset + env.CLOUDINARY_API_SECRET;
+  const toSign = "folder=" + folder + "&timestamp=" + timestamp + "&upload_preset=" + preset + creds.secret;
   const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(toSign));
   const signature = Array.from(new Uint8Array(digest), function (x) { return x.toString(16).padStart(2, "0"); }).join("");
-  return json({ signature: signature, timestamp: timestamp, apiKey: env.CLOUDINARY_API_KEY, folder: folder, uploadPreset: preset });
+  return json({
+    signature: signature, timestamp: timestamp, apiKey: creds.key, folder: folder, uploadPreset: preset,
+    cloudName: creds.cloud || undefined,
+  });
+}
+
+/**
+ * The size a cart line refers to. A valid key is used as given; a missing one
+ * falls back to the product's first size that has a price (not every scent
+ * comes in 30ml: some are 100ml only).
+ */
+function pickSizeKey(sizes, wanted) {
+  const keys = ["size30", "size50", "size100"];
+  const w = String(wanted || "");
+  if (keys.indexOf(w) >= 0) return w;
+  for (const k of keys) { if (sizes && sizes[k] && Number(sizes[k].price) > 0) return k; }
+  return "size30";
 }
 
 async function handleSend(request, env) {
@@ -991,15 +1028,14 @@ async function handleValidatePromo(request, env) {
       const opts = p.sizes && typeof p.sizes === "object" ? p.sizes : null;
       let unit = effectivePrice(p);
       if (opts) {
-        const key = ["size30", "size50", "size100"].indexOf(String(raw.sizeKey || "")) >= 0
-          ? String(raw.sizeKey) : "size30";
+        const key = pickSizeKey(opts, raw.sizeKey);
         const s = opts[key];
         if (!s || !(Number(s.price) > 0)) {
           return json({ error: "One of the selected sizes is no longer available." }, 400);
         }
         unit = sizePrice(s);
       }
-      const sizeKey = opts ? (["size30", "size50", "size100"].indexOf(String(raw.sizeKey || "")) >= 0 ? String(raw.sizeKey) : "size30") : null;
+      const sizeKey = opts ? pickSizeKey(opts, raw.sizeKey) : null;
       lines.push({
         unitPrice: unit, qty: qty, productId: productId, sizeKey: sizeKey,
         size: sizeKey && opts[sizeKey] ? opts[sizeKey].size : (p.size || null),
@@ -1516,7 +1552,7 @@ class Firestore {
       let label = p.name || "An item";
 
       if (sizes) {
-        sizeKey = sizeKeys.indexOf(String(line.sizeKey || "")) >= 0 ? String(line.sizeKey) : "size30";
+        sizeKey = pickSizeKey(sizes, line.sizeKey);
         chosen = sizes[sizeKey];
         if (!chosen || !(Number(chosen.price) > 0)) {
           throw httpError(400, label + " is not available in that size.");
